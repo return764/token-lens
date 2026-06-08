@@ -1,0 +1,17 @@
+# SPM
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+
+# macOS
+.DS_Store
+*.swp
+
+# TokenLens
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

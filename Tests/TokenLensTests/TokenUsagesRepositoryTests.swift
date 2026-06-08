@@ -1,0 +1,91 @@
+import XCTest
+@testable import TokenLensApp
+import GRDB
+
+final class TokenUsagesRepositoryTests: XCTestCase {
+
+    var dbManager: DatabaseManager!
+
+    override func setUp() {
+        super.setUp()
+        dbManager = try! DatabaseManager(kind: .inMemory)
+    }
+
+    // MARK: - TokenUsage model
+
+    func test_tokenUsage_init_storesAllFields() {
+        let createdAt = Date()
+        let usage = TokenUsage(
+            id: "u-1",
+            agenticTool: "pi",
+            providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 100,
+            outputTokens: 50,
+            cachedInputTokens: 10,
+            cacheWriteTokens: 5,
+            reasoningTokens: 20,
+            totalTokens: 185,
+            costUsd: 0.003,
+            createdAt: createdAt
+        )
+
+        XCTAssertEqual(usage.id, "u-1")
+        XCTAssertEqual(usage.agenticTool, "pi")
+        XCTAssertEqual(usage.providerId, "anthropic")
+        XCTAssertEqual(usage.model, "claude-sonnet-4-20250514")
+        XCTAssertEqual(usage.inputTokens, 100)
+        XCTAssertEqual(usage.outputTokens, 50)
+        XCTAssertEqual(usage.cachedInputTokens, 10)
+        XCTAssertEqual(usage.cacheWriteTokens, 5)
+        XCTAssertEqual(usage.reasoningTokens, 20)
+        XCTAssertEqual(usage.totalTokens, 185)
+        XCTAssertEqual(usage.costUsd, 0.003)
+        XCTAssertEqual(usage.createdAt, createdAt)
+    }
+
+    // MARK: - TokenUsagesRepository insert + fetch
+
+    func test_insertAndFetch_recentTokenUsages() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+
+        try repo.insert(TokenUsage(
+            id: "u-1", agenticTool: "pi", providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 150,
+            costUsd: 0.003, createdAt: Date()
+        ))
+        try repo.insert(TokenUsage(
+            id: "u-2", agenticTool: "codex", providerId: "openai",
+            model: "gpt-4.1-mini",
+            inputTokens: 200, outputTokens: 100, cachedInputTokens: 10,
+            cacheWriteTokens: 5, reasoningTokens: 0, totalTokens: 315,
+            costUsd: 0.0008, createdAt: Date()
+        ))
+
+        let recent = try repo.fetchRecent(limit: 10)
+        XCTAssertEqual(recent.count, 2)
+        // Most recent first
+        XCTAssertEqual(recent[0].id, "u-2")
+        XCTAssertEqual(recent[1].id, "u-1")
+        XCTAssertEqual(recent[1].agenticTool, "pi")
+        XCTAssertEqual(recent[1].totalTokens, 150)
+    }
+
+    func test_fetchRecent_respectsLimit() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+
+        for i in 0..<5 {
+            try repo.insert(TokenUsage(
+                id: "u-\(i)", agenticTool: "pi", providerId: "anthropic",
+                model: nil, inputTokens: i * 10, outputTokens: i * 5,
+                cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+                totalTokens: i * 15, costUsd: 0, createdAt: Date()
+            ))
+        }
+
+        let recent = try repo.fetchRecent(limit: 3)
+        XCTAssertEqual(recent.count, 3)
+    }
+}
