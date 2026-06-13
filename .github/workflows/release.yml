@@ -18,13 +18,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # ── 提取版本号：去掉 v 前缀 ──────────────────────────────────
+      # ── 提取版本号 ──────────────────────────────────────────────
       - name: Parse tag
         id: tag
         run: |
-          # GITHUB_REF 格式: refs/tags/v1.0.0
-          FULL="${GITHUB_REF#refs/tags/}"   # v1.0.0
-          VERSION="${FULL#v}"               # 1.0.0
+          REF="$GITHUB_REF"
+          REF="$REF"   # 让 shell 展开，避免后续 # 匹配问题
+          if [[ "$REF" == refs/tags/v* ]]; then
+            # Tag push: refs/tags/v1.0.0 → full=v1.0.0  version=1.0.0
+            FULL="${REF#refs/tags/}"
+            VERSION="${FULL#v}"
+          else
+            # workflow_dispatch 或非 tag — 使用 commit SHA 兜底
+            FULL="dev-${GITHUB_SHA::7}"
+            VERSION="0.0.0-${GITHUB_SHA::7}"
+            echo "::warning::Not a tag push (REF=$REF), using dev version $VERSION"
+          fi
           echo "full=$FULL" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Tag: $FULL  Version: $VERSION"

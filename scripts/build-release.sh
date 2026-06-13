@@ -163,8 +163,8 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
 # Inject version into Info.plist and copy
-sed -e "s/1\.0\.0/$VERSION/g" \
-    -e "s/<string>1<\/string>/<string>$BUILD_NUM<\/string>/g" \
+sed -e "s|1\.0\.0|$VERSION|g" \
+    -e "s|<string>1</string>|<string>$BUILD_NUM</string>|g" \
     "$PKG_DIR/Info.plist" > "$APP_DIR/Contents/Info.plist"
 
 # Copy binary
