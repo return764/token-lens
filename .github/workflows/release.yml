@@ -1,0 +1,75 @@
+name: Release
+
+# ── 仅在推送 tag（如 v1.0.0）时触发 ──────────────────────────────────────
+on:
+  push:
+    tags:
+      - 'v*'           # v1.0.0 / v2.3.1 等
+  workflow_dispatch:    # 手动触发（方便调试）
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: macos-15   # macOS 15 + Xcode 16 (Swift 5.9+ 兼容)
+    permissions:
+      contents: write   # 创建 Release / 上传 asset
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 提取版本号：去掉 v 前缀 ──────────────────────────────────
+      - name: Parse tag
+        id: tag
+        run: |
+          # GITHUB_REF 格式: refs/tags/v1.0.0
+          FULL="${GITHUB_REF#refs/tags/}"   # v1.0.0
+          VERSION="${FULL#v}"               # 1.0.0
+          echo "full=$FULL" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag: $FULL  Version: $VERSION"
+
+      # ── Swift build (release) ────────────────────────────────────
+      - name: Build release binary
+        run: swift build -c release
+
+      # ── 打包 .app bundle ─────────────────────────────────────────
+      - name: Create .app bundle & DMG
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          DMG: 1
+          # 不签名/不公证 — GitHub Actions 无 Developer ID，本地用 SIGN=1
+          SIGN: 0
+          NOTARIZE: 0
+        run: ./scripts/build-release.sh
+
+      # ── 创建 zip（方便用户下载） ─────────────────────────────────
+      - name: Archive .app
+        run: |
+          cd .build
+          VERSION="${{ steps.tag.outputs.version }}"
+          zip -r "TokenLens-${VERSION}.zip" TokenLens.app
+
+      # ── 上传到 GitHub Release ────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.full }}
+          name: "TokenLens ${{ steps.tag.outputs.full }}"
+          body: |
+            ## 🚀 TokenLens ${{ steps.tag.outputs.full }}
+
+            自动构建于 commit [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+
+            ### 📦 Assets
+
+            - `TokenLens-${{ steps.tag.outputs.version }}.zip` — 未签名 .app，首次打开需右键 → 打开
+            - `TokenLens-${{ steps.tag.outputs.version }}.dmg` — 未签名 DMG
+
+            > ⚠️ 此构建**未代码签名**。如需签名版本，请在本地执行 `SIGN=1 DMG=1 ./scripts/build-release.sh`。
+          files: |
+            .build/TokenLens-${{ steps.tag.outputs.version }}.zip
+            .build/TokenLens-${{ steps.tag.outputs.version }}.dmg
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.full, '-') }}
+          generate_release_notes: false
