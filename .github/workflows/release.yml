@@ -59,26 +59,58 @@ jobs:
           VERSION="${{ steps.tag.outputs.version }}"
           zip -r "TokenLens-${VERSION}.zip" TokenLens.app
 
-      # ── 上传到 GitHub Release ────────────────────────────────────
-      - name: Create GitHub Release
+      # ── 提取 CHANGELOG.md 中对应版本的段落 ─────────────────────
+      - name: Prepare release notes
+        id: notes
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            awk -v ver="$VERSION" '
+              /^## \[/ {
+                if (found) exit
+                gsub(/^## \[/, "")
+                gsub(/\] - .*/, "")
+                if ($0 == ver) { found=1 }
+              }
+              found { print }
+            ' CHANGELOG.md > .build/release-notes.md
+          fi
+
+          if [ -s .build/release-notes.md ]; then
+            echo "HAS_CHANGELOG=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Using CHANGELOG.md section for v$VERSION"
+            cat .build/release-notes.md
+          else
+            echo "HAS_CHANGELOG=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️  No CHANGELOG.md section for v$VERSION, will use auto-generated notes"
+          fi
+
+      # ── 上传到 GitHub Release（有 CHANGELOG） ─────────────────
+      - name: Create GitHub Release (from CHANGELOG)
+        if: steps.notes.outputs.HAS_CHANGELOG == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.full }}
           name: "TokenLens ${{ steps.tag.outputs.full }}"
-          body: |
-            ## 🚀 TokenLens ${{ steps.tag.outputs.full }}
-
-            自动构建于 commit [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-
-            ### 📦 Assets
-
-            - `TokenLens-${{ steps.tag.outputs.version }}.zip` — 未签名 .app，首次打开需右键 → 打开
-            - `TokenLens-${{ steps.tag.outputs.version }}.dmg` — 未签名 DMG
-
-            > ⚠️ 此构建**未代码签名**。如需签名版本，请在本地执行 `SIGN=1 DMG=1 ./scripts/build-release.sh`。
+          body_path: .build/release-notes.md
           files: |
             .build/TokenLens-${{ steps.tag.outputs.version }}.zip
             .build/TokenLens-${{ steps.tag.outputs.version }}.dmg
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.full, '-') }}
           generate_release_notes: false
+
+      # ── 上传到 GitHub Release（自动生成 release notes） ──────
+      - name: Create GitHub Release (auto-generated)
+        if: steps.notes.outputs.HAS_CHANGELOG != 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.full }}
+          name: "TokenLens ${{ steps.tag.outputs.full }}"
+          files: |
+            .build/TokenLens-${{ steps.tag.outputs.version }}.zip
+            .build/TokenLens-${{ steps.tag.outputs.version }}.dmg
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.full, '-') }}
+          generate_release_notes: true
