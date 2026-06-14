@@ -88,4 +88,54 @@ final class TokenUsagesRepositoryTests: XCTestCase {
         let recent = try repo.fetchRecent(limit: 3)
         XCTAssertEqual(recent.count, 3)
     }
+
+    func test_fetchMinuteAggregated_groupsBySingleMinute() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+
+        try repo.insert(TokenUsage(
+            id: "u-1", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 10, outputTokens: 5, cachedInputTokens: 2,
+            cacheWriteTokens: 1, reasoningTokens: 0, totalTokens: 18,
+            costUsd: 0.001, createdAt: try requireDate("2026-06-14T10:03:05Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "u-2", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 20, outputTokens: 7, cachedInputTokens: 3,
+            cacheWriteTokens: 0, reasoningTokens: 1, totalTokens: 31,
+            costUsd: 0.002, createdAt: try requireDate("2026-06-14T10:03:55Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "u-3", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 30, outputTokens: 9, cachedInputTokens: 4,
+            cacheWriteTokens: 2, reasoningTokens: 0, totalTokens: 45,
+            costUsd: 0.003, createdAt: try requireDate("2026-06-14T10:04:01Z")
+        ))
+
+        let buckets = try repo.fetchMinuteAggregated(
+            source: "codex",
+            provider: "openai",
+            model: "gpt-5"
+        )
+
+        XCTAssertEqual(buckets.count, 2)
+        XCTAssertEqual(buckets[0].minute, try requireDate("2026-06-14T10:03:00Z"))
+        XCTAssertEqual(buckets[0].totalInputTokens, 30)
+        XCTAssertEqual(buckets[0].totalOutputTokens, 12)
+        XCTAssertEqual(buckets[0].totalCachedInputTokens, 5)
+        XCTAssertEqual(buckets[0].totalCacheWriteTokens, 1)
+        XCTAssertEqual(buckets[0].totalReasoningTokens, 1)
+        XCTAssertEqual(buckets[0].totalTokens, 49)
+        XCTAssertEqual(buckets[0].requestCount, 2)
+
+        XCTAssertEqual(buckets[1].minute, try requireDate("2026-06-14T10:04:00Z"))
+        XCTAssertEqual(buckets[1].totalInputTokens, 30)
+        XCTAssertEqual(buckets[1].requestCount, 1)
+    }
+
+    private func requireDate(_ text: String) throws -> Date {
+        try XCTUnwrap(ISO8601DateCoding.parse(text))
+    }
 }

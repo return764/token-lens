@@ -78,9 +78,7 @@ public final class TokenUsagesRepository {
         try dbManager.reader.read { db in
             var sql = """
                 SELECT
-                  strftime('%Y-%m-%dT%H:%M:00Z',
-                    CAST(strftime('%s', created_at) AS INTEGER) / 600 * 600,
-                    'unixepoch') AS minute,
+                  strftime('%Y-%m-%dT%H:%M:00Z', created_at) AS minute,
                   SUM(input_tokens)        AS total_input,
                   SUM(output_tokens)       AS total_output,
                   SUM(cached_input_tokens) AS total_cached_input,

@@ -1,8 +1,8 @@
 import SwiftUI
 import Charts
 
-/// 按 10 分钟聚合的 token 消耗堆叠柱状图。
-/// 少量数据时铺满容器，长时间跨度时按 10 分钟槽位横向滚动。
+/// 按分钟聚合的 token 消耗堆叠柱状图。
+/// 少量数据时铺满容器，长时间跨度时按分钟槽位横向滚动。
 struct OverviewChartView: View {
     let buckets: [MinuteAggregation]
     let yAxisMode: String  // "tokens" or "cost"
@@ -10,12 +10,12 @@ struct OverviewChartView: View {
     @State private var selectedBucket: MinuteAggregation?
     @State private var hoverLocation: CGPoint?
 
-    private let barSlotWidth: CGFloat = 42
-    private let barWidth: CGFloat = 10
+    private let barSlotWidth: CGFloat = 18
+    private let barWidth: CGFloat = 6
     private let tooltipWidth: CGFloat = 260
     private let minSlots = 6
     private let horizontalPadding: CGFloat = 12
-    private let bucketInterval: TimeInterval = 10 * 60
+    private let bucketInterval: TimeInterval = 60
 
     var body: some View {
         if buckets.isEmpty {
@@ -285,20 +285,27 @@ private struct OverviewChartTooltip: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                tooltipRow(color: TokenDimension.input.color, label: "Input", value: bucket.totalInputTokens)
-                tooltipRow(color: TokenDimension.output.color, label: "Output", value: bucket.totalOutputTokens)
-                tooltipRow(color: TokenDimension.cached.color, label: "Cached", value: bucket.totalCachedTokens)
+                if yAxisMode == "cost" {
+                    HStack {
+                        Text("Cost")
+                        Spacer()
+                        Text(formatCost(bucket.totalCostUsd))
+                            .monospacedDigit()
+                    }
+                    HStack {
+                        Text("Requests")
+                        Spacer()
+                        Text("\(bucket.requestCount)")
+                            .monospacedDigit()
+                    }
+                } else {
+                    tooltipRow(color: TokenDimension.input.color, label: "Input", value: bucket.totalInputTokens)
+                    tooltipRow(color: TokenDimension.output.color, label: "Output", value: bucket.totalOutputTokens)
+                    tooltipRow(color: TokenDimension.cached.color, label: "Cached", value: bucket.totalCachedTokens)
 
-                if bucket.totalReasoningTokens > 0 {
-                    tooltipRow(color: .purple, label: "Reasoning", value: bucket.totalReasoningTokens)
-                }
-
-                Divider()
-                HStack {
-                    Text("Total")
-                    Spacer()
-                    Text("\(formatTokens(bucket.totalTokens)) tokens")
-                        .monospacedDigit()
+                    if bucket.totalReasoningTokens > 0 {
+                        tooltipRow(color: .purple, label: "Reasoning", value: bucket.totalReasoningTokens)
+                    }
                 }
             }
             .font(.caption)
@@ -312,7 +319,7 @@ private struct OverviewChartTooltip: View {
 
     private var primaryValue: String {
         if yAxisMode == "cost" {
-            return String(format: "$%.4f", bucket.totalCostUsd)
+            return formatCost(bucket.totalCostUsd)
         }
         return "\(formatTokens(chartedTotalTokens)) tokens"
     }
@@ -337,6 +344,10 @@ private struct OverviewChartTooltip: View {
 
     private func formatTokens(_ value: Int) -> String {
         value.formatted(.number)
+    }
+
+    private func formatCost(_ value: Double) -> String {
+        String(format: "$%.4f", value)
     }
 }
 
