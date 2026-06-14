@@ -41,6 +41,16 @@ public final class AppState: ObservableObject {
     @Published public var recentUsages: [TokenUsage] = []
     @Published public var localSources: [LocalScanSource] = []
 
+    // MARK: - Overview (chart)
+    @Published public var overviewBuckets: [MinuteAggregation] = []
+    @Published public var overviewSource: String = ""
+    @Published public var overviewProvider: String = ""
+    @Published public var overviewModel: String = ""
+    @Published public var overviewAvailableSources: [String] = []
+    @Published public var overviewAvailableProviders: [String] = []
+    @Published public var overviewAvailableModels: [String] = []
+    @Published public var overviewYAxis: String = "tokens"  // "tokens" or "cost"
+
     // MARK: - Repos
     private let tokenUsagesRepo: TokenUsagesRepository
     private let settingsRepo: SettingsRepository
@@ -76,7 +86,9 @@ public final class AppState: ObservableObject {
                 self?.refresh()
             }
             localSourcesService.onLiveTokensImported = { [weak self] inputTokens, outputTokens, costUsd in
-                self?.handleLiveTokensImported(inputTokens: inputTokens, outputTokens: outputTokens, costUsd: costUsd)
+                guard let self else { return }
+                self.handleLiveTokensImported(inputTokens: inputTokens, outputTokens: outputTokens, costUsd: costUsd)
+                self.refreshOverview()
             }
         }
 
@@ -117,12 +129,137 @@ public final class AppState: ObservableObject {
         } catch {
             print("[TokenLens] refresh error: \(error)")
         }
+        refreshOverview()
     }
 
     public func setTimeRange(_ range: TimeRange) {
         timeRange = range
         try? settingsRepo.update("menu_time_range", value: range.rawValue)
         refresh()
+    }
+
+    // MARK: - Overview
+
+    /// 全量刷新 overview 数据：可选列表 + 聚合。首次调用时自动初始化选中项。
+    public func refreshOverview() {
+        do {
+            overviewAvailableSources = try tokenUsagesRepo.fetchDistinctSources()
+
+            guard !overviewAvailableSources.isEmpty else { return }
+
+            // 自动初始化选中项（如果尚未初始化或选中的值已不在可选列表中）
+            if overviewSource.isEmpty || !overviewAvailableSources.contains(overviewSource) {
+                overviewSource = overviewAvailableSources[0]
+            }
+
+            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(for: overviewSource)
+            if overviewProvider.isEmpty || !overviewAvailableProviders.contains(overviewProvider) {
+                overviewProvider = overviewAvailableProviders.first ?? ""
+            }
+
+            guard !overviewProvider.isEmpty else { return }
+
+            overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
+                for: overviewSource, provider: overviewProvider
+            )
+            if overviewModel.isEmpty || !overviewAvailableModels.contains(overviewModel) {
+                overviewModel = overviewAvailableModels.first ?? ""
+            }
+
+            guard !overviewModel.isEmpty else { return }
+
+            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+                source: overviewSource,
+                provider: overviewProvider,
+                model: overviewModel,
+                since: timeRange.startDate
+            )
+        } catch {
+            print("[TokenLens] refreshOverview error: \(error)")
+        }
+    }
+
+    /// 用户选择了新的 source → 联动重置 provider 和 model。
+    public func selectOverviewSource(_ source: String) {
+        guard source != overviewSource else { return }
+        overviewSource = source
+        do {
+            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(for: source)
+            overviewProvider = overviewAvailableProviders.first ?? ""
+
+            guard !overviewProvider.isEmpty else {
+                overviewAvailableModels = []
+                overviewModel = ""
+                overviewBuckets = []
+                return
+            }
+
+            overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
+                for: source, provider: overviewProvider
+            )
+            overviewModel = overviewAvailableModels.first ?? ""
+
+            guard !overviewModel.isEmpty else {
+                overviewBuckets = []
+                return
+            }
+
+            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+                source: source,
+                provider: overviewProvider,
+                model: overviewModel,
+                since: timeRange.startDate
+            )
+        } catch {
+            print("[TokenLens] selectOverviewSource error: \(error)")
+        }
+    }
+
+    /// 用户选择了新的 provider → 联动重置 model。
+    public func selectOverviewProvider(_ provider: String) {
+        guard provider != overviewProvider else { return }
+        overviewProvider = provider
+        do {
+            overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
+                for: overviewSource, provider: provider
+            )
+            overviewModel = overviewAvailableModels.first ?? ""
+
+            guard !overviewModel.isEmpty else {
+                overviewBuckets = []
+                return
+            }
+
+            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+                source: overviewSource,
+                provider: provider,
+                model: overviewModel,
+                since: timeRange.startDate
+            )
+        } catch {
+            print("[TokenLens] selectOverviewProvider error: \(error)")
+        }
+    }
+
+    /// 用户选择了新的 model → 直接重新查询。
+    public func selectOverviewModel(_ model: String) {
+        guard model != overviewModel else { return }
+        overviewModel = model
+        do {
+            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+                source: overviewSource,
+                provider: overviewProvider,
+                model: model,
+                since: timeRange.startDate
+            )
+        } catch {
+            print("[TokenLens] selectOverviewModel error: \(error)")
+        }
+    }
+
+    /// 切换 Y 轴模式。
+    public func setOverviewYAxis(_ mode: String) {
+        overviewYAxis = mode
     }
 
     // MARK: - Menu bar display cycling

@@ -5,12 +5,89 @@ struct SettingsTab: View {
 
     var body: some View {
         Form {
+            overviewSection
             usageSection
             localSourcesSection
             monitoringSection
         }
         .formStyle(.grouped)
         .onAppear { appState.refresh() }
+    }
+
+    private var overviewSection: some View {
+        Section("Overview") {
+            if appState.overviewAvailableSources.isEmpty {
+                Text("No token usage recorded yet.")
+                    .foregroundColor(.secondary)
+            } else {
+                // Filter bar
+                HStack(spacing: 12) {
+                    Picker("Source", selection: Binding(
+                        get: { appState.overviewSource },
+                        set: { appState.selectOverviewSource($0) }
+                    )) {
+                        ForEach(appState.overviewAvailableSources, id: \.self) { source in
+                            Text(overviewSourceDisplayName(source)).tag(source)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+
+                    Picker("Provider", selection: Binding(
+                        get: { appState.overviewProvider },
+                        set: { appState.selectOverviewProvider($0) }
+                    )) {
+                        ForEach(appState.overviewAvailableProviders, id: \.self) { provider in
+                            Text(provider).tag(provider)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+                    .disabled(appState.overviewAvailableProviders.isEmpty)
+
+                    Picker("Model", selection: Binding(
+                        get: { appState.overviewModel },
+                        set: { appState.selectOverviewModel($0) }
+                    )) {
+                        ForEach(appState.overviewAvailableModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                    .disabled(appState.overviewAvailableModels.isEmpty)
+
+                    Spacer()
+
+                    Picker("Y Axis", selection: Binding(
+                        get: { appState.overviewYAxis },
+                        set: { appState.setOverviewYAxis($0) }
+                    )) {
+                        Text("Tokens").tag("tokens")
+                        Text("Cost").tag("cost")
+                    }
+                    .labelsHidden()
+                    .frame(width: 100)
+                }
+                .padding(.bottom, 4)
+
+                // Chart
+                OverviewChartView(
+                    buckets: appState.overviewBuckets,
+                    yAxisMode: appState.overviewYAxis
+                )
+
+                // Legend (only in tokens mode)
+                if appState.overviewYAxis == "tokens" {
+                    HStack {
+                        Spacer()
+                        OverviewLegend()
+                        Spacer()
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
     }
 
     private var usageSection: some View {
@@ -153,6 +230,15 @@ struct SettingsTab: View {
     }
 
     private func localSourceDisplayName(_ sourceTool: String) -> String {
+        switch sourceTool {
+        case "claude_code": return "Claude Code"
+        case "codex": return "Codex"
+        case "pi": return "pi"
+        default: return sourceTool
+        }
+    }
+
+    private func overviewSourceDisplayName(_ sourceTool: String) -> String {
         switch sourceTool {
         case "claude_code": return "Claude Code"
         case "codex": return "Codex"
