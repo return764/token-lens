@@ -26,12 +26,13 @@ public final class AppState: ObservableObject {
 
     // MARK: - Display
     @Published public var menuBarDisplay: String = "cost"
-    @Published public var liveTokenDisplayLayout: String = "vertical"
+    @Published public var liveDisplayMode: String = "horizontal"
     @Published public var timeRange: TimeRange = .today
 
     // MARK: - Live consumption (menu bar dynamic icon)
     @Published public var liveInputTokens: Int = 0
     @Published public var liveOutputTokens: Int = 0
+    @Published public var liveCostUsd: Double = 0
     @Published public var isLiveConsumptionActive: Bool = false
     private var liveConsumptionResetTask: Task<Void, Never>?
     private static let liveConsumptionResetInterval: TimeInterval = 60
@@ -47,7 +48,7 @@ public final class AppState: ObservableObject {
     private let localSourcesService: LocalSourcesBackgroundService
 
     private static let displayModes = ["cost", "tokens"]
-    private static let liveTokenDisplayLayouts = ["horizontal", "vertical"]
+    private static let liveDisplayModes = ["horizontal", "vertical", "cost"]
 
     public init(dbManager: DatabaseManager, autoScanLocalRecords: Bool = true) {
         self.tokenUsagesRepo = TokenUsagesRepository(dbManager: dbManager)
@@ -62,16 +63,20 @@ public final class AppState: ObservableObject {
         if let raw = try? settingsRepo.fetch("menu_time_range"), let tr = TimeRange(rawValue: raw) {
             self.timeRange = tr
         }
-        if let layout = try? settingsRepo.fetch("live_token_display_layout"), Self.liveTokenDisplayLayouts.contains(layout) {
-            self.liveTokenDisplayLayout = layout
+        // Migrate from old key if present
+        if let layout = try? settingsRepo.fetch("live_token_display_layout"), layout == "vertical" {
+            self.liveDisplayMode = "vertical"
+        }
+        if let mode = try? settingsRepo.fetch("live_display_mode"), Self.liveDisplayModes.contains(mode) {
+            self.liveDisplayMode = mode
         }
 
         if autoScanLocalRecords {
             localSourcesService.onRefreshNeeded = { [weak self] in
                 self?.refresh()
             }
-            localSourcesService.onLiveTokensImported = { [weak self] inputTokens, outputTokens in
-                self?.handleLiveTokensImported(inputTokens: inputTokens, outputTokens: outputTokens)
+            localSourcesService.onLiveTokensImported = { [weak self] inputTokens, outputTokens, costUsd in
+                self?.handleLiveTokensImported(inputTokens: inputTokens, outputTokens: outputTokens, costUsd: costUsd)
             }
         }
 
@@ -137,24 +142,25 @@ public final class AppState: ObservableObject {
         try? settingsRepo.update("menu_bar_display", value: mode)
     }
 
-    public func setLiveTokenDisplayLayout(_ layout: String) {
-        guard Self.liveTokenDisplayLayouts.contains(layout) else { return }
-        liveTokenDisplayLayout = layout
-        try? settingsRepo.update("live_token_display_layout", value: layout)
+    public func setLiveDisplayMode(_ mode: String) {
+        guard Self.liveDisplayModes.contains(mode) else { return }
+        liveDisplayMode = mode
+        try? settingsRepo.update("live_display_mode", value: mode)
     }
 
     // MARK: - Live consumption handling
 
     /// Called when new tokens are imported from local records.
-    private func handleLiveTokensImported(inputTokens: Int, outputTokens: Int) {
-        tlog("🔥 LIVE tokens: in=\(inputTokens) out=\(outputTokens)")
+    private func handleLiveTokensImported(inputTokens: Int, outputTokens: Int, costUsd: Double) {
+        tlog("🔥 LIVE tokens: in=\(inputTokens) out=\(outputTokens) cost=\(costUsd)")
         // Accumulate: multiple batches may arrive in quick succession
         liveInputTokens += inputTokens
         liveOutputTokens += outputTokens
+        liveCostUsd += costUsd
         isLiveConsumptionActive = true
-        tlog("🔥 LIVE active, total in=\(liveInputTokens) out=\(liveOutputTokens)")
+        tlog("🔥 LIVE active, in=\(liveInputTokens) out=\(liveOutputTokens) cost=\(liveCostUsd)")
 
-        // Reset (cancel previous, start new) the 10-second timer
+        // Reset (cancel previous, start new) the 60-second timer
         liveConsumptionResetTask?.cancel()
         let interval = Self.liveConsumptionResetInterval
         liveConsumptionResetTask = Task { [weak self] in
@@ -165,6 +171,7 @@ public final class AppState: ObservableObject {
                 self.isLiveConsumptionActive = false
                 self.liveInputTokens = 0
                 self.liveOutputTokens = 0
+                self.liveCostUsd = 0
             }
         }
     }
@@ -185,12 +192,18 @@ public final class AppState: ObservableObject {
     }
 
     private var liveDisplayString: String {
-        let input = formatTokensCompact(liveInputTokens)
-        let output = formatTokensCompact(liveOutputTokens)
-        if liveTokenDisplayLayout == "horizontal" {
+        switch liveDisplayMode {
+        case "cost":
+            return String(format: "↑$%.4f", liveCostUsd)
+        case "vertical":
+            let input = formatTokensCompact(liveInputTokens)
+            let output = formatTokensCompact(liveOutputTokens)
+            return "↑\(input)\n↓\(output)"
+        default: // "horizontal"
+            let input = formatTokensCompact(liveInputTokens)
+            let output = formatTokensCompact(liveOutputTokens)
             return "↑\(input) ↓\(output)"
         }
-        return "↑\(input)\n↓\(output)"
     }
 
     // MARK: - Private formatting

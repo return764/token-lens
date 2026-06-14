@@ -128,7 +128,9 @@ private final class MenuBarStatusRollView: NSView {
         for line in 0..<lineCount {
             let lineSegments = newSegments.filter { $0.line == line }
             let widths = lineSegments.map { segment in
-                ceil(max(measure(segment.text), oldSegments[segment.id].map { measure($0.text) } ?? 0))
+                let w = ceil(measure(segment.text, fontSize: segment.fontSize))
+                let old = oldSegments[segment.id].map { ceil(measure($0.text, fontSize: $0.fontSize)) } ?? 0
+                return max(w, old)
             }
             let lineWidth = widths.reduce(0, +)
             var x = floor((bounds.width - lineWidth) / 2)
@@ -136,20 +138,27 @@ private final class MenuBarStatusRollView: NSView {
 
             for (index, segment) in lineSegments.enumerated() {
                 let oldSegmentText = oldSegments[segment.id]?.text
-                let frame = CGRect(x: x, y: y, width: widths[index], height: lineHeight)
+                var frame = CGRect(x: x, y: y, width: widths[index], height: lineHeight)
+
+                // Shift cost-sub down like a subscript
+                if segment.id == "cost-sub" {
+                    frame.origin.y -= lineHeight * 0.35
+                }
 
                 switch segment.kind {
                 case .symbol:
-                    nextLayer.addSublayer(textLayer(segment.text, frame: frame, role: role(for: segment)))
+                    nextLayer.addSublayer(textLayer(segment.text, frame: frame, role: role(for: segment), fontSize: segment.fontSize))
                 case .separator:
-                    nextLayer.addSublayer(textLayer(segment.text, frame: frame, role: .primary))
+                    nextLayer.addSublayer(textLayer(segment.text, frame: frame, role: .primary, fontSize: segment.fontSize))
                 case .value:
                     renderValue(
                         oldText: oldSegmentText,
                         newText: segment.text,
                         frame: frame,
+                        role: role(for: segment),
                         in: nextLayer,
-                        animated: animated
+                        animated: animated,
+                        fontSize: segment.fontSize
                     )
                 }
 
@@ -172,6 +181,7 @@ private final class MenuBarStatusRollView: NSView {
         let kind: SegmentKind
         let text: String
         let line: Int
+        var fontSize: CGFloat? = nil
     }
 
     private func parseSegments(_ text: String) -> [Segment] {
@@ -191,6 +201,26 @@ private final class MenuBarStatusRollView: NSView {
                 Segment(id: "down-symbol", kind: .symbol, text: "↓", line: 1),
                 Segment(id: "output", kind: .value, text: output, line: 1)
             ]
+        }
+
+        // Cost display: ↑$0.0234 — split into main + smaller sub
+        if text.hasPrefix("↑$") {
+            let value = String(text.dropFirst())
+            let subFontSize = font.pointSize * 0.65
+            if value.count >= 3 {
+                let mainPart = String(value.dropLast(2))
+                let subPart = String(value.suffix(2))
+                return [
+                    Segment(id: "up-symbol", kind: .symbol, text: "↑", line: 0),
+                    Segment(id: "cost-value", kind: .value, text: mainPart, line: 0),
+                    Segment(id: "cost-sub", kind: .value, text: subPart, line: 0, fontSize: subFontSize)
+                ]
+            } else {
+                return [
+                    Segment(id: "up-symbol", kind: .symbol, text: "↑", line: 0),
+                    Segment(id: "cost-value", kind: .value, text: value, line: 0)
+                ]
+            }
         }
 
         let rest = text.dropFirst()
@@ -215,26 +245,26 @@ private final class MenuBarStatusRollView: NSView {
         }
     }
 
-    private func renderValue(oldText: String?, newText: String, frame: CGRect, in parent: CALayer, animated: Bool) {
+    private func renderValue(oldText: String?, newText: String, frame: CGRect, role: TextRole = .primary, in parent: CALayer, animated: Bool, fontSize: CGFloat? = nil) {
         guard animated else {
-            parent.addSublayer(textLayer(newText, frame: frame))
+            parent.addSublayer(textLayer(newText, frame: frame, role: role, fontSize: fontSize))
             return
         }
 
         guard let oldText else {
-            renderRolling(oldText: "", newText: newText, frame: frame, in: parent)
+            renderRolling(oldText: "", newText: newText, frame: frame, role: role, in: parent, fontSize: fontSize)
             return
         }
 
         guard oldText != newText else {
-            parent.addSublayer(textLayer(newText, frame: frame))
+            parent.addSublayer(textLayer(newText, frame: frame, role: role, fontSize: fontSize))
             return
         }
 
         if canRollPerCharacter(from: oldText, to: newText) {
-            renderCharacterDiff(oldText: oldText, newText: newText, frame: frame, in: parent)
+            renderCharacterDiff(oldText: oldText, newText: newText, frame: frame, role: role, in: parent, fontSize: fontSize)
         } else {
-            renderRolling(oldText: oldText, newText: newText, frame: frame, in: parent)
+            renderRolling(oldText: oldText, newText: newText, frame: frame, role: role, in: parent, fontSize: fontSize)
         }
     }
 
@@ -245,7 +275,7 @@ private final class MenuBarStatusRollView: NSView {
         return changes.allSatisfy { $0.isNumber && $1.isNumber }
     }
 
-    private func renderCharacterDiff(oldText: String, newText: String, frame: CGRect, in parent: CALayer) {
+    private func renderCharacterDiff(oldText: String, newText: String, frame: CGRect, role: TextRole, in parent: CALayer, fontSize: CGFloat? = nil) {
         let oldCharacters = Array(oldText)
         let newCharacters = Array(newText)
         var x = frame.minX
@@ -253,28 +283,28 @@ private final class MenuBarStatusRollView: NSView {
         for index in newCharacters.indices {
             let oldCharacter = String(oldCharacters[index])
             let newCharacter = String(newCharacters[index])
-            let width = ceil(max(measure(oldCharacter), measure(newCharacter))) + 1
+            let width = ceil(max(measure(oldCharacter, fontSize: fontSize), measure(newCharacter, fontSize: fontSize))) + 1
             let characterFrame = CGRect(x: x, y: frame.minY, width: width, height: frame.height)
 
             if oldCharacter == newCharacter {
-                parent.addSublayer(textLayer(newCharacter, frame: characterFrame))
+                parent.addSublayer(textLayer(newCharacter, frame: characterFrame, role: role, fontSize: fontSize))
             } else {
-                renderRolling(oldText: oldCharacter, newText: newCharacter, frame: characterFrame, in: parent)
+                renderRolling(oldText: oldCharacter, newText: newCharacter, frame: characterFrame, role: role, in: parent, fontSize: fontSize)
             }
 
-            x += measure(newCharacter)
+            x += measure(newCharacter, fontSize: fontSize)
         }
     }
 
-    private func renderRolling(oldText: String, newText: String, frame: CGRect, in parent: CALayer) {
+    private func renderRolling(oldText: String, newText: String, frame: CGRect, role: TextRole = .primary, in parent: CALayer, fontSize: CGFloat? = nil) {
         let duration: TimeInterval = 0.28
         let clipLayer = CALayer()
         clipLayer.frame = frame
         clipLayer.masksToBounds = true
         parent.addSublayer(clipLayer)
 
-        let oldLayer = textLayer(oldText, frame: clipLayer.bounds)
-        let newLayer = textLayer(newText, frame: clipLayer.bounds.offsetBy(dx: 0, dy: -frame.height))
+        let oldLayer = textLayer(oldText, frame: clipLayer.bounds, role: role, fontSize: fontSize)
+        let newLayer = textLayer(newText, frame: clipLayer.bounds.offsetBy(dx: 0, dy: -frame.height), role: role, fontSize: fontSize)
         clipLayer.addSublayer(oldLayer)
         clipLayer.addSublayer(newLayer)
 
@@ -358,12 +388,18 @@ private final class MenuBarStatusRollView: NSView {
         return colorRef
     }
 
-    private func measure(_ text: String) -> CGFloat {
-        measure(text, vertical: isVerticalLayout)
+    private func measure(_ text: String, fontSize: CGFloat? = nil) -> CGFloat {
+        measure(text, vertical: isVerticalLayout, fontSize: fontSize)
     }
 
-    private func measure(_ text: String, vertical: Bool) -> CGFloat {
-        (text as NSString).size(withAttributes: textAttributes(vertical: vertical)).width
+    private func measure(_ text: String, vertical: Bool, fontSize: CGFloat? = nil) -> CGFloat {
+        var attrs = textAttributes(vertical: vertical)
+        if let fontSize {
+            attrs[.font] = vertical
+                ? NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
+                : NSFont.menuBarFont(ofSize: fontSize)
+        }
+        return (text as NSString).size(withAttributes: attrs).width
     }
 
     private func maxLineWidth(for text: String, vertical: Bool? = nil) -> CGFloat {
@@ -378,13 +414,13 @@ private final class MenuBarStatusRollView: NSView {
             .max() ?? 0
     }
 
-    private func textLayer(_ text: String, frame: CGRect, role: TextRole = .primary) -> CATextLayer {
+    private func textLayer(_ text: String, frame: CGRect, role: TextRole = .primary, fontSize: CGFloat? = nil) -> CATextLayer {
         let layer = CATextLayer()
         layer.name = role.rawValue
         layer.frame = frame
         layer.string = text
         layer.font = font
-        layer.fontSize = font.pointSize
+        layer.fontSize = fontSize ?? font.pointSize
         layer.foregroundColor = cgColor(for: role)
         layer.alignmentMode = .left
         layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
@@ -573,6 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard force || didChangeText || didSwitchLiveState else { return }
 
         let previousLiveText = oldLiveState == true ? oldText : nil
+        let enteringLive = !(oldLiveState == true) && isLive
         let liveRollView = isLive ? (statusTextView ?? MenuBarStatusRollView(frame: button.bounds)) : nil
         let width = isLive
             ? max(liveRollView?.fittingWidth(for: text, previousText: previousLiveText) ?? measureStatusTitle(text), 24)
@@ -593,12 +630,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 rollView.autoresizingMask = [.width, .height]
                 button.addSubview(rollView)
                 statusTextView = rollView
+                // Fade-in transition from static to live
+                if enteringLive {
+                    rollView.alphaValue = 0
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.25
+                        ctx.allowsImplicitAnimation = true
+                        rollView.animator().alphaValue = 1
+                    }
+                }
             }
             rollView.frame = button.bounds
             rollView.update(text: text, previousText: previousLiveText, animated: animated && previousLiveText != nil)
         } else {
-            statusTextView?.removeFromSuperview()
-            statusTextView = nil
+            // Fade-out transition from live to static
+            if oldLiveState == true, let rollView = statusTextView {
+                statusTextView = nil
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.2
+                    rollView.animator().alphaValue = 0
+                }, completionHandler: {
+                    rollView.removeFromSuperview()
+                })
+            } else {
+                statusTextView?.removeFromSuperview()
+                statusTextView = nil
+            }
             button.image = nil
             button.imagePosition = .noImage
             button.attributedTitle = attributedStatusTitle(text)
@@ -637,6 +694,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let downLocation = nsText.range(of: "↓").location
             if downLocation != NSNotFound {
                 attributed.addAttribute(.foregroundColor, value: NSColor.systemCyan, range: NSRange(location: downLocation, length: 1))
+            }
+
+            // Cost display: last 2 digits in smaller font
+            if nsText.hasPrefix("↑$") && nsText.length >= 5 {
+                let smallFont = isLiveStack
+                    ? NSFont.monospacedDigitSystemFont(ofSize: font.pointSize * 0.65, weight: .regular)
+                    : NSFont.menuBarFont(ofSize: font.pointSize * 0.65)
+                attributed.addAttribute(.font, value: smallFont, range: NSRange(location: nsText.length - 2, length: 2))
             }
         }
 

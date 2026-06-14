@@ -21,8 +21,8 @@ public final class LocalSourcesBackgroundService {
     /// Callback invoked on the main actor after imports complete (for UI refresh).
     public var onRefreshNeeded: (() -> Void)?
     /// Callback invoked on the main actor with live token consumption data.
-    /// Parameters: total input tokens, total output tokens of the newly imported batch.
-    public var onLiveTokensImported: ((_ inputTokens: Int, _ outputTokens: Int) -> Void)?
+    /// Parameters: total input tokens, total output tokens, total cost (USD) of the newly imported batch.
+    public var onLiveTokensImported: ((_ inputTokens: Int, _ outputTokens: Int, _ costUsd: Double) -> Void)?
 
     public init(
         repository: LocalScanRepository,
@@ -42,8 +42,8 @@ public final class LocalSourcesBackgroundService {
             guard let self else { return }
             DispatchQueue.main.async {
                 if result.inserted > 0 {
-                    tlog("📥 Import completed: [\(sourceTool)] inserted=\(result.inserted) in=\(result.inputTokens) out=\(result.outputTokens)")
-                    self.onLiveTokensImported?(result.inputTokens, result.outputTokens)
+                    tlog("📥 Import completed: [\(sourceTool)] inserted=\(result.inserted) in=\(result.inputTokens) out=\(result.outputTokens) cost=\(result.costUsd)")
+                    self.onLiveTokensImported?(result.inputTokens, result.outputTokens, result.costUsd)
                 }
                 self.onRefreshNeeded?()
             }

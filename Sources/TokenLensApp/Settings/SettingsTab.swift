@@ -114,14 +114,15 @@ struct SettingsTab: View {
                 appState.setMenuBarDisplay(newValue)
             }
 
-            Picker("Live Token Layout", selection: $appState.liveTokenDisplayLayout) {
-                Text("Horizontal").tag("horizontal")
-                Text("Vertical").tag("vertical")
+            Picker("Live Usage Mode", selection: $appState.liveDisplayMode) {
+                Text("Token (→)").tag("horizontal")
+                Text("Token (↓)").tag("vertical")
+                Text("Cost ($)").tag("cost")
             }
-            .onChange(of: appState.liveTokenDisplayLayout) { _, newValue in
-                appState.setLiveTokenDisplayLayout(newValue)
+            .onChange(of: appState.liveDisplayMode) { _, newValue in
+                appState.setLiveDisplayMode(newValue)
             }
-            Text("Controls how active live input/output tokens are shown in the menu bar.")
+            Text("How live import activity is shown in the menu bar.")
                 .font(.caption)
                 .foregroundColor(.secondary)
 

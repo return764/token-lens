@@ -9,13 +9,16 @@ public struct ImportResult: Equatable {
     public let inputTokens: Int
     /// Total output tokens of newly inserted events (excludes skipped duplicates).
     public let outputTokens: Int
+    /// Total cost (USD) of newly inserted events (excludes skipped duplicates).
+    public let costUsd: Double
 
-    public init(inserted: Int, skipped: Int, failed: Int, inputTokens: Int = 0, outputTokens: Int = 0) {
+    public init(inserted: Int, skipped: Int, failed: Int, inputTokens: Int = 0, outputTokens: Int = 0, costUsd: Double = 0) {
         self.inserted = inserted
         self.skipped = skipped
         self.failed = failed
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.costUsd = costUsd
     }
 }
 
@@ -222,6 +225,7 @@ public final class LocalScanRepository {
         var skipped = 0
         var totalInputTokens = 0
         var totalOutputTokens = 0
+        var totalCostUsd: Double = 0
         let importedAt = ISO8601DateCoding.string(from: Date())
         let preparedEvents = try events.map(prepareUsageEvent)
 
@@ -258,10 +262,11 @@ public final class LocalScanRepository {
                 inserted += 1
                 totalInputTokens += event.inputTokens
                 totalOutputTokens += event.outputTokens
+                totalCostUsd += prepared.costUsd
             }
         }
 
-        return ImportResult(inserted: inserted, skipped: skipped, failed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens)
+        return ImportResult(inserted: inserted, skipped: skipped, failed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, costUsd: totalCostUsd)
     }
 
     /// Import a batch of usage events with key-based dedup, updating the file checkpoint atomically.
@@ -279,6 +284,7 @@ public final class LocalScanRepository {
         var skipped = 0
         var totalInputTokens = 0
         var totalOutputTokens = 0
+        var totalCostUsd: Double = 0
         let importedAt = ISO8601DateCoding.string(from: Date())
         let preparedEvents = try events.map(prepareUsageEvent)
 
@@ -312,13 +318,14 @@ public final class LocalScanRepository {
                 inserted += 1
                 totalInputTokens += event.inputTokens
                 totalOutputTokens += event.outputTokens
+                totalCostUsd += prepared.costUsd
             }
 
             // Update checkpoint in the same transaction
             try updateCheckpointInDB(db, checkpoint: checkpoint, importedEventCount: inserted)
         }
 
-        return ImportResult(inserted: inserted, skipped: skipped, failed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens)
+        return ImportResult(inserted: inserted, skipped: skipped, failed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, costUsd: totalCostUsd)
     }
 
     private func updateCheckpoint(_ checkpoint: LocalScanFileCheckpointUpdate, importedEventCount: Int) throws {
