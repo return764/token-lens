@@ -63,6 +63,63 @@ public final class TokenUsagesRepository {
         }
     }
 
+    public func fetchUsageTotals(since startDate: Date?) throws -> UsageTotals {
+        try dbManager.reader.read { db in
+            var sql = """
+                SELECT
+                  COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                  COALESCE(SUM(cost_usd), 0) AS total_cost
+                FROM token_usages
+                """
+            var arguments: StatementArguments = []
+
+            if let since = startDate {
+                sql += " WHERE created_at >= ?"
+                arguments = [ISO8601DateCoding.string(from: since)]
+            }
+
+            let row = try Row.fetchOne(db, sql: sql, arguments: arguments)
+            return UsageTotals(
+                totalTokens: row?["total_tokens"] ?? 0,
+                costUsd: row?["total_cost"] ?? 0
+            )
+        }
+    }
+
+    public func fetchMenuUsages(since startDate: Date?, limit: Int = 12) throws -> [MenuUsage] {
+        try dbManager.reader.read { db in
+            var sql = """
+                SELECT
+                  agentic_tool,
+                  provider_id,
+                  COALESCE(model, 'unknown') AS display_model,
+                  SUM(input_tokens) AS total_input,
+                  SUM(output_tokens) AS total_output,
+                  SUM(cached_input_tokens + cache_write_tokens) AS total_cache,
+                  SUM(cost_usd) AS total_cost,
+                  MAX(created_at) AS latest_created_at
+                FROM token_usages
+                """
+            var values: [any DatabaseValueConvertible] = []
+
+            if let since = startDate {
+                sql += " WHERE created_at >= ?"
+                values.append(ISO8601DateCoding.string(from: since))
+            }
+
+            sql += """
+
+                GROUP BY agentic_tool, provider_id, display_model
+                ORDER BY latest_created_at DESC, agentic_tool, provider_id, display_model
+                LIMIT ?
+                """
+            values.append(limit)
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(values))
+            return rows.map(Self.menuUsageFromRow)
+        }
+    }
+
 
     // MARK: - Aggregation (Overview Chart)
 
@@ -226,6 +283,19 @@ public final class TokenUsagesRepository {
             totalTokens: row["total_tokens"],
             costUsd: row["cost_usd"],
             createdAt: ISO8601DateCoding.parse((row["created_at"] as String?) ?? "") ?? Date()
+        )
+    }
+
+    private static func menuUsageFromRow(_ row: Row) -> MenuUsage {
+        MenuUsage(
+            agenticTool: row["agentic_tool"],
+            providerId: row["provider_id"],
+            model: row["display_model"],
+            inputTokens: row["total_input"] ?? 0,
+            outputTokens: row["total_output"] ?? 0,
+            cacheTokens: row["total_cache"] ?? 0,
+            costUsd: row["total_cost"] ?? 0,
+            latestCreatedAt: ISO8601DateCoding.parse((row["latest_created_at"] as String?) ?? "") ?? Date()
         )
     }
 }

@@ -86,6 +86,29 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func test_appState_refreshMenuData_populatesMenuTotalsAndRows() throws {
+        let dbManager = try DatabaseManager(kind: .inMemory)
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+        let now = Date()
+
+        try repo.insert(TokenUsage(
+            id: "u-1", agenticTool: "pi", providerId: "anthropic",
+            model: nil,
+            inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 150,
+            costUsd: 0.003, createdAt: now
+        ))
+
+        let state = AppState(dbManager: dbManager, autoScanLocalRecords: false)
+        state.refreshMenuData()
+
+        XCTAssertEqual(state.menuTotalTokens, 150)
+        XCTAssertEqual(state.menuTotalCostUsd, 0.003, accuracy: 0.00001)
+        XCTAssertEqual(state.menuUsages.count, 1)
+        XCTAssertEqual(state.menuUsages[0].id, "pi::anthropic::unknown")
+    }
+
+    @MainActor
     func test_appState_refreshOverview_limitsOverviewToMostRecentDay() throws {
         let dbManager = try DatabaseManager(kind: .inMemory)
         let repo = TokenUsagesRepository(dbManager: dbManager)

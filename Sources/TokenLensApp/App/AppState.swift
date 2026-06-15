@@ -39,7 +39,10 @@ public final class AppState: ObservableObject {
 
     // MARK: - Usage lists
     @Published public var recentUsages: [TokenUsage] = []
+    @Published public var menuUsages: [MenuUsage] = []
     @Published public var localSources: [LocalScanSource] = []
+    @Published public var menuTotalTokens: Int = 0
+    @Published public var menuTotalCostUsd: Double = 0
 
     // MARK: - Overview (chart)
     @Published public var overviewBuckets: [MinuteAggregation] = []
@@ -128,10 +131,25 @@ public final class AppState: ObservableObject {
         do {
             recentUsages = try tokenUsagesRepo.fetchUsages(since: timeRange.startDate)
             localSources = try localScanRepo.fetchSources()
+            let totals = try tokenUsagesRepo.fetchUsageTotals(since: timeRange.startDate)
+            menuUsages = try tokenUsagesRepo.fetchMenuUsages(since: timeRange.startDate)
+            menuTotalTokens = totals.totalTokens
+            menuTotalCostUsd = totals.costUsd
         } catch {
             print("[TokenLens] refresh error: \(error)")
         }
         refreshOverview()
+    }
+
+    public func refreshMenuData() {
+        do {
+            let totals = try tokenUsagesRepo.fetchUsageTotals(since: timeRange.startDate)
+            menuUsages = try tokenUsagesRepo.fetchMenuUsages(since: timeRange.startDate)
+            menuTotalTokens = totals.totalTokens
+            menuTotalCostUsd = totals.costUsd
+        } catch {
+            print("[TokenLens] refreshMenuData error: \(error)")
+        }
     }
 
     public func setTimeRange(_ range: TimeRange) {
@@ -366,11 +384,9 @@ public final class AppState: ObservableObject {
         }
         switch menuBarDisplay {
         case "tokens":
-            let totalTokens = recentUsages.reduce(0) { $0 + $1.totalTokens }
-            return formatTokens(totalTokens)
+            return formatTokens(menuTotalTokens)
         default: // "cost"
-            let totalCost = recentUsages.reduce(0.0) { $0 + $1.costUsd }
-            return String(format: "$%.2f", totalCost)
+            return String(format: "$%.2f", menuTotalCostUsd)
         }
     }
 

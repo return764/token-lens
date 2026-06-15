@@ -544,9 +544,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
-        state.refresh()
         popover.contentViewController = NSHostingController(rootView: MenuBarView(appState: state))
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        Task { @MainActor in
+            state.refreshMenuData()
+        }
     }
 
     private func setupStatusItemRecoveryHooks() {

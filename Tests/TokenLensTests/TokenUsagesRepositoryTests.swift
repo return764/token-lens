@@ -89,6 +89,69 @@ final class TokenUsagesRepositoryTests: XCTestCase {
         XCTAssertEqual(recent.count, 3)
     }
 
+    func test_fetchUsageTotals_respectsSince() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+        let now = Date()
+        let since = now.addingTimeInterval(-60)
+
+        try repo.insert(TokenUsage(
+            id: "old-1", agenticTool: "pi", providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 150,
+            costUsd: 0.003, createdAt: now.addingTimeInterval(-120)
+        ))
+        try repo.insert(TokenUsage(
+            id: "new-1", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 200, outputTokens: 100, cachedInputTokens: 10,
+            cacheWriteTokens: 5, reasoningTokens: 0, totalTokens: 315,
+            costUsd: 0.0008, createdAt: now
+        ))
+
+        let totals = try repo.fetchUsageTotals(since: since)
+
+        XCTAssertEqual(totals.totalTokens, 315)
+        XCTAssertEqual(totals.costUsd, 0.0008, accuracy: 0.00001)
+    }
+
+    func test_fetchMenuUsages_aggregatesAndOrdersByLatestUsage() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+
+        try repo.insert(TokenUsage(
+            id: "codex-1", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 10, outputTokens: 5, cachedInputTokens: 2,
+            cacheWriteTokens: 1, reasoningTokens: 0, totalTokens: 18,
+            costUsd: 0.001, createdAt: try requireDate("2026-06-14T10:03:05Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "pi-1", agenticTool: "pi", providerId: "anthropic",
+            model: nil,
+            inputTokens: 20, outputTokens: 7, cachedInputTokens: 3,
+            cacheWriteTokens: 0, reasoningTokens: 1, totalTokens: 31,
+            costUsd: 0.002, createdAt: try requireDate("2026-06-14T10:04:00Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "codex-2", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 30, outputTokens: 9, cachedInputTokens: 4,
+            cacheWriteTokens: 2, reasoningTokens: 0, totalTokens: 45,
+            costUsd: 0.003, createdAt: try requireDate("2026-06-14T10:05:00Z")
+        ))
+
+        let menuUsages = try repo.fetchMenuUsages(since: nil, limit: 12)
+
+        XCTAssertEqual(menuUsages.map(\.id), [
+            "codex::openai::gpt-5",
+            "pi::anthropic::unknown"
+        ])
+        XCTAssertEqual(menuUsages[0].inputTokens, 40)
+        XCTAssertEqual(menuUsages[0].outputTokens, 14)
+        XCTAssertEqual(menuUsages[0].cacheTokens, 9)
+        XCTAssertEqual(menuUsages[0].costUsd, 0.004, accuracy: 0.00001)
+    }
+
     func test_fetchMinuteAggregated_groupsBySingleMinute() throws {
         let repo = TokenUsagesRepository(dbManager: dbManager)
 

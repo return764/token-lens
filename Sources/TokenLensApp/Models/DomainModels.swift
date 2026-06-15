@@ -30,3 +30,48 @@ public struct TokenUsage: Identifiable {
         self.createdAt = createdAt
     }
 }
+
+public struct UsageTotals: Equatable {
+    public let totalTokens: Int
+    public let costUsd: Double
+
+    public init(totalTokens: Int, costUsd: Double) {
+        self.totalTokens = totalTokens
+        self.costUsd = costUsd
+    }
+}
+
+public struct MenuUsage: Identifiable, Equatable {
+    public let agenticTool: String
+    public let providerId: String
+    public let model: String
+    public let inputTokens: Int
+    public let outputTokens: Int
+    public let cacheTokens: Int
+    public let costUsd: Double
+    public let latestCreatedAt: Date
+
+    public var id: String {
+        "\(agenticTool)::\(providerId)::\(model)"
+    }
+
+    public init(
+        agenticTool: String,
+        providerId: String,
+        model: String,
+        inputTokens: Int,
+        outputTokens: Int,
+        cacheTokens: Int,
+        costUsd: Double,
+        latestCreatedAt: Date
+    ) {
+        self.agenticTool = agenticTool
+        self.providerId = providerId
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheTokens = cacheTokens
+        self.costUsd = costUsd
+        self.latestCreatedAt = latestCreatedAt
+    }
+}
