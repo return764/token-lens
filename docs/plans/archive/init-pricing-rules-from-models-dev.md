@@ -1,7 +1,7 @@
 # 首次启动时从 models.dev/api.json 初始化 models 表
 
-> 状态：✅ Completed  
-> 最后更新：2026-06-13
+> 状态：**Completed / Archived** — 2026-06-15  
+> 最后更新：2026-06-15
 
 ## 1. 背景
 
@@ -138,7 +138,7 @@ public final class ModelsSeeder {
 - `ModelsSeederTests`
 - `CostCalculatorTests`
 
-当前 `swift test`：74 tests, 0 failures。
+当前 `swift test`：80 tests, 0 failures。
 
 ## 9. 后续可改进
 

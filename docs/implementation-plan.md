@@ -1,6 +1,6 @@
 # TokenLens — 实现计划
 
-> 最后更新：2026-06-13 | 当前阶段：Local Agent Record Scanner MVP 已实现
+> 最后更新：2026-06-15 | 当前阶段：Local Agent Record Scanner MVP 已实现
 
 ## 当前完成状态总览
 
@@ -14,7 +14,7 @@
 | 数据模型 | `token_usages` 瘦身账本；删除 `model_calls` / `daily_usage` 当前依赖 | ✅ |
 | 定价 | `models` 表 + models.dev 首次初始化 + CostCalculator | ✅ |
 | 隐私 | 不保存 prompt/response/tool output/API key；key/context 脱敏 | ✅ |
-| 测试 | 74 tests, 0 failures | ✅ |
+| 测试 | 80 tests, 0 failures | ✅ |
 | 网络捕获 | 不属于当前实现，已抽离到未来计划 | ⏭️ |
 
 网络相关未实现能力已单独成文：[`docs/plans/future/network-capture-plan.md`](plans/future/network-capture-plan.md)。本文件只描述当前已实现 MVP 与近期计划。
@@ -97,7 +97,7 @@
 ## 当前测试状态
 
 ```text
-✅ 74 tests, 0 failures
+✅ 80 tests, 0 failures
 ```
 
 重点覆盖：

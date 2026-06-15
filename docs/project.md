@@ -1,6 +1,6 @@
 # TokenLens — 项目文档
 
-> 最后更新：2026-06-13 | 当前阶段：MVP — Local Agent Record Scanner + Background Watcher
+> 最后更新：2026-06-15 | 当前阶段：MVP — Local Agent Record Scanner + Background Watcher
 
 ## 1. 项目概述
 
@@ -149,7 +149,7 @@ TokenLens/
 ## 7. 测试统计
 
 ```text
-✅ 74 tests — 0 failures
+✅ 80 tests — 0 failures
 ```
 
 | 测试类 | 测试数 | 覆盖内容 |

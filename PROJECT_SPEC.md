@@ -1,6 +1,6 @@
 # TokenLens 项目规格
 
-> 最后更新：2026-06-13  
+> 最后更新：2026-06-15  
 > 当前规格：Local Agent Record Scanner MVP  
 > 非当前目标：网络捕获 / MITM / Network Extension，详见 `docs/plans/future/network-capture-plan.md`
 
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS models (
 ## 8. 当前验收标准
 
 - `swift build` 成功。
-- `swift test` 全绿（当前 74 tests）。
+- `swift test` 全绿（当前 80 tests）。
 - 启动 App 后自动扫描存在的 Codex / Claude Code / pi 目录。
 - 目录不存在不报错；后续出现会重试。
 - 新增 JSONL usage 后，后台导入并刷新 UI。

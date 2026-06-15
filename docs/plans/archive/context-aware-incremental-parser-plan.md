@@ -1,7 +1,7 @@
 # Context-aware Incremental Parser Plan
 
-> 状态：✅ Completed  
-> 最后更新：2026-06-13
+> 状态：**Completed / Archived** — 2026-06-15  
+> 最后更新：2026-06-15
 
 ## 1. 目标
 

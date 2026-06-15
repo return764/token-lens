@@ -1,7 +1,7 @@
 # Local Agent Record Scanner MVP 计划
 
-> 状态：✅ Completed  
-> 最后更新：2026-06-13  
+> 状态：**Completed / Archived** — 2026-06-15  
+> 最后更新：2026-06-15  
 > 当前实现见：`docs/project.md` 与 `docs/implementation-plan.md`
 
 ## 1. 产品决策
@@ -137,7 +137,7 @@ MVP 当前有 6 张表：
 已通过当前测试集：
 
 ```text
-✅ swift test — 74 tests, 0 failures
+✅ swift test — 80 tests, 0 failures
 ```
 
 相关测试：
