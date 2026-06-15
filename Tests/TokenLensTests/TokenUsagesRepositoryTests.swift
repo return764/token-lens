@@ -135,6 +135,33 @@ final class TokenUsagesRepositoryTests: XCTestCase {
         XCTAssertEqual(buckets[1].requestCount, 1)
     }
 
+    func test_distinctOverviewFilters_respectSince() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+        let now = Date()
+        let oldDate = now.addingTimeInterval(-2 * 24 * 60 * 60)
+        let since = now.addingTimeInterval(-60 * 60)
+
+        try repo.insert(TokenUsage(
+            id: "old-1", agenticTool: "pi", providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 150,
+            costUsd: 0.003, createdAt: oldDate
+        ))
+        try repo.insert(TokenUsage(
+            id: "new-1", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 200, outputTokens: 100, cachedInputTokens: 10,
+            cacheWriteTokens: 5, reasoningTokens: 0, totalTokens: 315,
+            costUsd: 0.0008, createdAt: now
+        ))
+
+        XCTAssertEqual(try repo.fetchDistinctSources(since: since), ["codex"])
+        XCTAssertEqual(try repo.fetchDistinctProviders(for: "codex", since: since), ["openai"])
+        XCTAssertEqual(try repo.fetchDistinctModels(for: "codex", provider: "openai", since: since), ["gpt-5"])
+        XCTAssertEqual(try repo.fetchDistinctProviders(for: "pi", since: since), [])
+    }
+
     private func requireDate(_ text: String) throws -> Date {
         try XCTUnwrap(ISO8601DateCoding.parse(text))
     }

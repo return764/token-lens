@@ -50,6 +50,8 @@ public final class AppState: ObservableObject {
     @Published public var overviewAvailableProviders: [String] = []
     @Published public var overviewAvailableModels: [String] = []
     @Published public var overviewYAxis: String = "tokens"  // "tokens" or "cost"
+    private static let overviewMaximumRange: TimeInterval = 24 * 60 * 60
+    private static let overviewMaximumBuckets = 24 * 60
 
     // MARK: - Repos
     private let tokenUsagesRepo: TokenUsagesRepository
@@ -143,36 +145,54 @@ public final class AppState: ObservableObject {
     /// 全量刷新 overview 数据：可选列表 + 聚合。首次调用时自动初始化选中项。
     public func refreshOverview() {
         do {
-            overviewAvailableSources = try tokenUsagesRepo.fetchDistinctSources()
+            let since = overviewStartDate
+            overviewAvailableSources = try tokenUsagesRepo.fetchDistinctSources(since: since)
 
-            guard !overviewAvailableSources.isEmpty else { return }
+            guard !overviewAvailableSources.isEmpty else {
+                clearOverviewSelection()
+                return
+            }
 
             // 自动初始化选中项（如果尚未初始化或选中的值已不在可选列表中）
             if overviewSource.isEmpty || !overviewAvailableSources.contains(overviewSource) {
                 overviewSource = overviewAvailableSources[0]
             }
 
-            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(for: overviewSource)
+            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(
+                for: overviewSource,
+                since: since
+            )
             if overviewProvider.isEmpty || !overviewAvailableProviders.contains(overviewProvider) {
                 overviewProvider = overviewAvailableProviders.first ?? ""
             }
 
-            guard !overviewProvider.isEmpty else { return }
+            guard !overviewProvider.isEmpty else {
+                overviewAvailableModels = []
+                overviewModel = ""
+                overviewBuckets = []
+                return
+            }
 
             overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
-                for: overviewSource, provider: overviewProvider
+                for: overviewSource,
+                provider: overviewProvider,
+                since: since
             )
             if overviewModel.isEmpty || !overviewAvailableModels.contains(overviewModel) {
                 overviewModel = overviewAvailableModels.first ?? ""
             }
 
-            guard !overviewModel.isEmpty else { return }
+            guard !overviewModel.isEmpty else {
+                overviewBuckets = []
+                return
+            }
 
             overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
                 source: overviewSource,
                 provider: overviewProvider,
                 model: overviewModel,
-                since: timeRange.startDate
+                since: since,
+                maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
             print("[TokenLens] refreshOverview error: \(error)")
@@ -184,7 +204,8 @@ public final class AppState: ObservableObject {
         guard source != overviewSource else { return }
         overviewSource = source
         do {
-            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(for: source)
+            let since = overviewStartDate
+            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(for: source, since: since)
             overviewProvider = overviewAvailableProviders.first ?? ""
 
             guard !overviewProvider.isEmpty else {
@@ -195,7 +216,9 @@ public final class AppState: ObservableObject {
             }
 
             overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
-                for: source, provider: overviewProvider
+                for: source,
+                provider: overviewProvider,
+                since: since
             )
             overviewModel = overviewAvailableModels.first ?? ""
 
@@ -208,7 +231,8 @@ public final class AppState: ObservableObject {
                 source: source,
                 provider: overviewProvider,
                 model: overviewModel,
-                since: timeRange.startDate
+                since: since,
+                maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
             print("[TokenLens] selectOverviewSource error: \(error)")
@@ -220,8 +244,11 @@ public final class AppState: ObservableObject {
         guard provider != overviewProvider else { return }
         overviewProvider = provider
         do {
+            let since = overviewStartDate
             overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
-                for: overviewSource, provider: provider
+                for: overviewSource,
+                provider: provider,
+                since: since
             )
             overviewModel = overviewAvailableModels.first ?? ""
 
@@ -234,7 +261,8 @@ public final class AppState: ObservableObject {
                 source: overviewSource,
                 provider: provider,
                 model: overviewModel,
-                since: timeRange.startDate
+                since: since,
+                maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
             print("[TokenLens] selectOverviewProvider error: \(error)")
@@ -250,7 +278,8 @@ public final class AppState: ObservableObject {
                 source: overviewSource,
                 provider: overviewProvider,
                 model: model,
-                since: timeRange.startDate
+                since: overviewStartDate,
+                maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
             print("[TokenLens] selectOverviewModel error: \(error)")
@@ -260,6 +289,23 @@ public final class AppState: ObservableObject {
     /// 切换 Y 轴模式。
     public func setOverviewYAxis(_ mode: String) {
         overviewYAxis = mode
+    }
+
+    private var overviewStartDate: Date {
+        let oneDayAgo = Date().addingTimeInterval(-Self.overviewMaximumRange)
+        guard let rangeStart = timeRange.startDate else {
+            return oneDayAgo
+        }
+        return max(rangeStart, oneDayAgo)
+    }
+
+    private func clearOverviewSelection() {
+        overviewSource = ""
+        overviewProvider = ""
+        overviewModel = ""
+        overviewAvailableProviders = []
+        overviewAvailableModels = []
+        overviewBuckets = []
     }
 
     // MARK: - Menu bar display cycling

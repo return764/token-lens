@@ -73,7 +73,7 @@ public final class TokenUsagesRepository {
         provider: String,
         model: String,
         since: Date? = nil,
-        maxBuckets: Int = 60
+        maxBuckets: Int = 24 * 60
     ) throws -> [MinuteAggregation] {
         try dbManager.reader.read { db in
             var sql = """
@@ -114,8 +114,21 @@ public final class TokenUsagesRepository {
     }
 
     /// 获取数据库中所有出现过的 agentic_tool（source）列表，按字母排序。
-    public func fetchDistinctSources() throws -> [String] {
+    public func fetchDistinctSources(since: Date? = nil) throws -> [String] {
         try dbManager.reader.read { db in
+            if let since = since {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT DISTINCT agentic_tool FROM token_usages
+                        WHERE created_at >= ?
+                        ORDER BY agentic_tool
+                        """,
+                    arguments: [ISO8601DateCoding.string(from: since)]
+                )
+                return rows.compactMap { $0["agentic_tool"] as String? }
+            }
+
             let rows = try Row.fetchAll(
                 db,
                 sql: "SELECT DISTINCT agentic_tool FROM token_usages ORDER BY agentic_tool"
@@ -125,8 +138,21 @@ public final class TokenUsagesRepository {
     }
 
     /// 获取指定 source 下出现过的 provider_id 列表，按字母排序。
-    public func fetchDistinctProviders(for source: String) throws -> [String] {
+    public func fetchDistinctProviders(for source: String, since: Date? = nil) throws -> [String] {
         try dbManager.reader.read { db in
+            if let since = since {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT DISTINCT provider_id FROM token_usages
+                        WHERE agentic_tool = ? AND created_at >= ?
+                        ORDER BY provider_id
+                        """,
+                    arguments: [source, ISO8601DateCoding.string(from: since)]
+                )
+                return rows.compactMap { $0["provider_id"] as String? }
+            }
+
             let rows = try Row.fetchAll(
                 db,
                 sql: "SELECT DISTINCT provider_id FROM token_usages WHERE agentic_tool = ? ORDER BY provider_id",
@@ -137,8 +163,22 @@ public final class TokenUsagesRepository {
     }
 
     /// 获取指定 source + provider 下出现过的 model 列表，按字母排序。
-    public func fetchDistinctModels(for source: String, provider: String) throws -> [String] {
+    public func fetchDistinctModels(for source: String, provider: String, since: Date? = nil) throws -> [String] {
         try dbManager.reader.read { db in
+            if let since = since {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT DISTINCT model FROM token_usages
+                        WHERE agentic_tool = ? AND provider_id = ? AND model IS NOT NULL
+                          AND created_at >= ?
+                        ORDER BY model
+                        """,
+                    arguments: [source, provider, ISO8601DateCoding.string(from: since)]
+                )
+                return rows.compactMap { $0["model"] as String? }
+            }
+
             let rows = try Row.fetchAll(
                 db,
                 sql: """

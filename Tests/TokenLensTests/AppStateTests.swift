@@ -84,4 +84,35 @@ final class AppStateTests: XCTestCase {
         state.menuBarDisplay = "tokens"
         XCTAssertFalse(state.menuBarDisplayText.hasPrefix("$"))
     }
+
+    @MainActor
+    func test_appState_refreshOverview_limitsOverviewToMostRecentDay() throws {
+        let dbManager = try DatabaseManager(kind: .inMemory)
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+        let now = Date()
+
+        try repo.insert(TokenUsage(
+            id: "old-1", agenticTool: "pi", providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 150,
+            costUsd: 0.003, createdAt: now.addingTimeInterval(-2 * 24 * 60 * 60)
+        ))
+        try repo.insert(TokenUsage(
+            id: "new-1", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 200, outputTokens: 100, cachedInputTokens: 10,
+            cacheWriteTokens: 5, reasoningTokens: 0, totalTokens: 315,
+            costUsd: 0.0008, createdAt: now
+        ))
+
+        let state = AppState(dbManager: dbManager, autoScanLocalRecords: false)
+        state.setTimeRange(.all)
+
+        XCTAssertEqual(state.overviewAvailableSources, ["codex"])
+        XCTAssertEqual(state.overviewSource, "codex")
+        XCTAssertEqual(state.overviewProvider, "openai")
+        XCTAssertEqual(state.overviewModel, "gpt-5")
+        XCTAssertEqual(state.overviewBuckets.count, 1)
+    }
 }

@@ -14,8 +14,9 @@ struct OverviewChartView: View {
     private let barWidth: CGFloat = 6
     private let tooltipWidth: CGFloat = 260
     private let minSlots = 6
-    private let horizontalPadding: CGFloat = 12
     private let bucketInterval: TimeInterval = 60
+    private let chartTopPadding: CGFloat = 6
+    private let chartBottomPadding: CGFloat = 8
 
     var body: some View {
         if buckets.isEmpty {
@@ -23,12 +24,9 @@ struct OverviewChartView: View {
         } else {
             GeometryReader { proxy in
                 ZStack(alignment: .topLeading) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        chart
-                            .frame(width: max(chartWidth, proxy.size.width - horizontalPadding * 2))
-                            .frame(height: chartHeight)
-                            .padding(.horizontal, horizontalPadding)
-                    }
+                    chart
+                        .frame(maxWidth: .infinity)
+                        .frame(height: chartHeight)
 
                     if let selectedBucket, let hoverLocation {
                         OverviewChartTooltip(bucket: selectedBucket, yAxisMode: yAxisMode)
@@ -94,7 +92,8 @@ struct OverviewChartView: View {
         )
         .chartLegend(.hidden)
         .chartXScale(domain: xDomain)
-        .chartYScale(domain: 0...yAxisUpperBound)
+        .chartScrollableAxes(.horizontal)
+        .chartXVisibleDomain(length: visibleXDomainLength)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: minBars)) { value in
                 AxisGridLine()
@@ -121,8 +120,8 @@ struct OverviewChartView: View {
                 }
             }
         }
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.top, chartTopPadding)
+        .padding(.bottom, chartBottomPadding)
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 Rectangle()
@@ -179,16 +178,9 @@ struct OverviewChartView: View {
         return leading...trailing
     }
 
-    private var yAxisUpperBound: Double {
-        let maxValue: Double
-        if yAxisMode == "cost" {
-            maxValue = sortedBuckets.map(\.totalCostUsd).max() ?? 0
-        } else {
-            maxValue = sortedBuckets
-                .map { Double($0.totalInputTokens + $0.totalOutputTokens + $0.totalCachedTokens) }
-                .max() ?? 0
-        }
-        return max(maxValue * 1.12, 1)
+    private var visibleXDomainLength: TimeInterval {
+        let visibleSlots = min(max(xSlotCount, minSlots), 36)
+        return TimeInterval(max(visibleSlots - 1, 1)) * bucketInterval
     }
 
     private var minBars: Int {
@@ -197,9 +189,6 @@ struct OverviewChartView: View {
 
     private func formatYAxisValue(_ value: Double) -> String {
         if yAxisMode == "cost" {
-            if value < 0.01 {
-                return String(format: "$%.4f", value)
-            }
             return String(format: "$%.2f", value)
         }
 
@@ -259,7 +248,7 @@ struct OverviewChartView: View {
         let xOffset: CGFloat = 18
         let yOffset: CGFloat = -88
         let halfWidth = tooltipWidth / 2
-        let x = min(max(location.x + horizontalPadding + xOffset + halfWidth, halfWidth + 8), size.width - halfWidth - 8)
+        let x = min(max(location.x + xOffset + halfWidth, halfWidth + 8), size.width - halfWidth - 8)
         let y = max(location.y + yOffset, 18)
         return CGPoint(x: x, y: y)
     }

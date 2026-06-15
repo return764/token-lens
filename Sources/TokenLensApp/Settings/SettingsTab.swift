@@ -77,15 +77,15 @@ struct SettingsTab: View {
                     yAxisMode: appState.overviewYAxis
                 )
 
-                // Legend (only in tokens mode)
-                if appState.overviewYAxis == "tokens" {
-                    HStack {
-                        Spacer()
-                        OverviewLegend()
-                        Spacer()
-                    }
-                    .padding(.top, 4)
+                HStack {
+                    Spacer()
+                    OverviewLegend()
+                        .opacity(appState.overviewYAxis == "tokens" ? 1 : 0)
+                    Spacer()
                 }
+                .frame(height: 18)
+                .padding(.top, 4)
+                .accessibilityHidden(appState.overviewYAxis != "tokens")
             }
         }
     }
