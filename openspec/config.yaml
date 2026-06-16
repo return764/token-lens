@@ -1,0 +1,25 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Swift 5.9+, SwiftUI, GRDB 6.x (SQLite), macOS 14+
+  Project: TokenLens — macOS menu bar app for tracking LLM token usage locally
+  Architecture: LocalUsageAdapter → LocalSourcesBackgroundService → LocalJSONLIncrementalReader → LocalScanRepository → SQLite
+  Key constraints:
+    - No network interception / MITM / HTTPS decryption / Network Extension
+    - No prompt, response, tool output, Authorization, or API key storage
+    - Reads local JSONL files from Codex (~/.codex/sessions/), Claude Code (~/.claude/projects/), pi (~/.pi/agent/sessions/)
+    - Event-level dedup via local_usage_imports table with stable keys
+  Database: GRDB with tables — settings, token_usages, local_scan_sources, local_scan_files, local_usage_imports, models
+  Project reference: PROJECT_SPEC.md (canonical project specification)
+
+rules:
+  proposal:
+    - Keep proposals focused and reference PROJECT_SPEC.md for context
+    - Non-goals must include: CLI tools, network capture, prompt saving, cloud sync, Windows/Linux
+  design:
+    - Follow existing architecture patterns (adapter → service → reader → repository)
+    - Target files under Sources/TokenLensApp/ and Tests/TokenLensTests/
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Each task should reference relevant source files
+    - Tests must be added for new features
