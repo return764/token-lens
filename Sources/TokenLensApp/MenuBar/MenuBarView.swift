@@ -38,7 +38,7 @@ struct MenuBarView: View {
             Divider()
 
             VStack(spacing: 0) {
-                MenuActionRow(title: "Settings", shortcut: "⌘,") {
+                MenuActionRow(title: "Dashboard", shortcut: "⌘,") {
                     globalAppDelegate?.openSettings()
                 }
                 .keyboardShortcut(",", modifiers: .command)

@@ -1,29 +1,4 @@
-## Purpose
-
-通过 macOS MenuBarExtra 和独立 Dashboard 窗口展示 token 用量数据，支持时间范围筛选和实时新用量提示。
-
-## Requirements
-
-### Requirement: Menu Bar Cost Display
-
-菜单栏必须显示选定时间范围内的累计 cost 或 token 用量。
-
-#### Scenario: Default display
-- **WHEN** 应用正常运行且用户未交互
-- **THEN** 菜单栏显示选定时间范围内的总 cost（如 "$0.42"）或总 tokens
-
-#### Scenario: No usage data
-- **WHEN** 选定时间范围内无任何 usage 记录
-- **THEN** 菜单栏显示 "$0.00" 或 "0 tokens"
-
-### Requirement: Live Token Display on New Import
-
-当有新的 usage 事件被导入时，菜单栏必须短暂显示这次使用的 input/output tokens。
-
-#### Scenario: New usage imported
-- **WHEN** 系统导入一个新的 usage 事件
-- **THEN** 菜单栏临时切换显示新导入的 input/output tokens（如 "↑1,200 ↓800"）
-- **AND** 短暂显示后恢复到正常的累计 cost/tokens 显示
+## MODIFIED Requirements
 
 ### Requirement: Settings Window
 
@@ -65,14 +40,6 @@
 - **WHEN** 用户打开 Settings tab
 - **THEN** 提供监控显示相关设置选项
 - **AND** 显示设置合并在 Settings 页面内，而不是作为独立 Monitoring 页面
-
-### Requirement: Time Range Selection
-
-用户必须能选择不同的时间范围来查看用量统计。
-
-#### Scenario: Time range changed
-- **WHEN** 用户在菜单栏或 Dashboard/Settings 中切换时间范围（如今天/本周/本月）
-- **THEN** 菜单栏和 Dashboard 中的用量数据相应更新
 
 ### Requirement: Menu Bar Menu
 

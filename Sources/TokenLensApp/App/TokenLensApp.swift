@@ -732,7 +732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(NSMenuItem(title: "About TokenLens", action: nil, keyEquivalent: ""))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Settings...", action: #selector(settingsAction), keyEquivalent: ","))
+        appMenu.addItem(NSMenuItem(title: "Dashboard", action: #selector(settingsAction), keyEquivalent: ","))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit TokenLens", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -755,6 +755,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         DispatchQueue.main.async {
             if let existing = self.settingsWindow {
+                existing.contentView = self.makeSettingsHostingView(appState: state)
                 NSApp.activate(ignoringOtherApps: true)
                 existing.level = .floating
                 existing.orderFrontRegardless()
@@ -763,18 +764,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
 
-            let contentView = SettingsView(appState: state)
-            let hostingView = NSHostingView(rootView: contentView)
-            hostingView.frame.size = hostingView.fittingSize
-
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 760, height: 760),
                 styleMask: [.titled, .closable, .resizable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "TokenLens Settings"
-            window.contentView = hostingView
+            window.title = "TokenLens Dashboard"
+            window.backgroundColor = .textBackgroundColor
+            window.contentView = self.makeSettingsHostingView(appState: state)
             window.center()
             window.isReleasedWhenClosed = false
             window.level = .floating
@@ -788,5 +786,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             window.makeKeyAndOrderFront(nil)
             tlog("Settings window opened ✅")
         }
+    }
+
+    private func makeSettingsHostingView(appState: AppState) -> NSHostingView<SettingsView> {
+        let hostingView = NSHostingView(rootView: SettingsView(appState: appState))
+        hostingView.frame.size = hostingView.fittingSize
+        return hostingView
     }
 }
