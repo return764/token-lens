@@ -6,17 +6,24 @@ import Charts
 struct OverviewChartView: View {
     let buckets: [MinuteAggregation]
     let yAxisMode: String  // "tokens" or "cost"
+    private let chartData: OverviewChartData
 
-    @State private var selectedBucket: MinuteAggregation?
-    @State private var hoverLocation: CGPoint?
+    @State private var hoverSelection: OverviewChartHoverSelection?
+    @StateObject private var hoverUpdateCoordinator = OverviewChartHoverUpdateCoordinator()
 
-    private let barSlotWidth: CGFloat = 18
     private let barWidth: CGFloat = 6
     private let tooltipWidth: CGFloat = 260
     private let minSlots = 6
     private let bucketInterval: TimeInterval = 60
     private let chartTopPadding: CGFloat = 6
     private let chartBottomPadding: CGFloat = 8
+    private let tooltipMoveThreshold: CGFloat = 0.5
+
+    init(buckets: [MinuteAggregation], yAxisMode: String) {
+        self.buckets = buckets
+        self.yAxisMode = yAxisMode
+        self.chartData = OverviewChartData(buckets: buckets)
+    }
 
     var body: some View {
         if buckets.isEmpty {
@@ -28,10 +35,11 @@ struct OverviewChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
 
-                    if let selectedBucket, let hoverLocation {
-                        OverviewChartTooltip(bucket: selectedBucket, yAxisMode: yAxisMode)
+                    if let hoverSelection {
+                        OverviewChartTooltip(bucket: hoverSelection.bucket, yAxisMode: yAxisMode)
+                            .equatable()
                             .frame(width: tooltipWidth)
-                            .position(tooltipPosition(for: hoverLocation, in: proxy.size))
+                            .position(tooltipPosition(for: hoverSelection.location, in: proxy.size))
                             .zIndex(20)
                             .allowsHitTesting(false)
                     }
@@ -57,9 +65,209 @@ struct OverviewChartView: View {
     // MARK: - Chart
 
     private var chart: some View {
+        OverviewChartPlot(
+            chartData: chartData,
+            yAxisMode: yAxisMode,
+            selectedMinute: hoverSelection?.bucket.minute,
+            barWidth: barWidth,
+            xDomain: xDomain,
+            visibleXDomainLength: visibleXDomainLength,
+            minBars: minBars,
+            chartTopPadding: chartTopPadding,
+            chartBottomPadding: chartBottomPadding
+        )
+        .equatable()
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            updateSelection(at: location, proxy: proxy, geometry: geometry)
+                        case .ended:
+                            clearSelection()
+                        }
+                    }
+            }
+        }
+    }
+
+    // MARK: - Sizing
+
+    private var chartHeight: CGFloat { 320 }
+
+    private var xSlotCount: Int {
+        guard let first = chartData.sortedBuckets.first?.minute,
+              let last = chartData.sortedBuckets.last?.minute else {
+            return minSlots
+        }
+        let span = max(last.timeIntervalSince(first), 0)
+        return max(Int(ceil(span / bucketInterval)) + 1, minSlots)
+    }
+
+    private var xDomain: ClosedRange<Date> {
+        guard let first = chartData.sortedBuckets.first?.minute,
+              let last = chartData.sortedBuckets.last?.minute else {
+            let now = Date()
+            return now.addingTimeInterval(-bucketInterval)...now.addingTimeInterval(bucketInterval)
+        }
+        let leading = first.addingTimeInterval(-bucketInterval)
+        let trailing = last.addingTimeInterval(bucketInterval)
+        return leading...trailing
+    }
+
+    private var visibleXDomainLength: TimeInterval {
+        let visibleSlots = min(max(xSlotCount, minSlots), 36)
+        return TimeInterval(max(visibleSlots - 1, 1)) * bucketInterval
+    }
+
+    private var minBars: Int {
+        min(max(xSlotCount, 4), 8)
+    }
+
+    private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
+        guard let plotFrameAnchor = proxy.plotFrame else {
+            clearSelection()
+            return
+        }
+        let plotFrame = geometry[plotFrameAnchor]
+        guard plotFrame.contains(location) else {
+            clearSelection()
+            return
+        }
+
+        let relativeX = location.x - plotFrame.origin.x
+        guard let hoveredDate: Date = proxy.value(atX: relativeX) else {
+            clearSelection()
+            return
+        }
+
+        guard let nextBucket = chartData.nearestBucket(to: hoveredDate, maximumDistance: bucketInterval / 2) else {
+            clearSelection()
+            return
+        }
+
+        updateHoverSelection(bucket: nextBucket, location: location)
+    }
+
+    private func clearSelection() {
+        hoverUpdateCoordinator.cancel()
+        if hoverSelection != nil {
+            hoverSelection = nil
+        }
+    }
+
+    private func updateHoverSelection(bucket: MinuteAggregation, location: CGPoint) {
+        let nextSelection = OverviewChartHoverSelection(bucket: bucket, location: location)
+
+        guard let currentSelection = hoverSelection else {
+            hoverSelection = nextSelection
+            return
+        }
+
+        guard currentSelection.bucket.id == bucket.id else {
+            hoverUpdateCoordinator.cancel()
+            hoverSelection = nextSelection
+            return
+        }
+
+        if shouldUpdateTooltipLocation(to: location) {
+            hoverUpdateCoordinator.schedule(selection: nextSelection) { selection in
+                hoverSelection = selection
+            }
+        }
+    }
+
+    private func shouldUpdateTooltipLocation(to location: CGPoint) -> Bool {
+        guard let hoverLocation = hoverSelection?.location else {
+            return true
+        }
+        return abs(hoverLocation.x - location.x) > tooltipMoveThreshold ||
+            abs(hoverLocation.y - location.y) > tooltipMoveThreshold
+    }
+
+    private func tooltipPosition(for location: CGPoint, in size: CGSize) -> CGPoint {
+        let xOffset: CGFloat = 18
+        let yOffset: CGFloat = -88
+        let halfWidth = tooltipWidth / 2
+        let x = min(max(location.x + xOffset + halfWidth, halfWidth + 8), size.width - halfWidth - 8)
+        let y = max(location.y + yOffset, 18)
+        return CGPoint(x: x, y: y)
+    }
+}
+
+private struct OverviewChartHoverSelection: Equatable {
+    let bucket: MinuteAggregation
+    let location: CGPoint
+}
+
+@MainActor
+private final class OverviewChartHoverUpdateCoordinator: ObservableObject {
+    private static let frameIntervalNanoseconds: UInt64 = 16_000_000
+
+    private var pendingSelection: OverviewChartHoverSelection?
+    private var scheduledTask: Task<Void, Never>?
+
+    func schedule(
+        selection: OverviewChartHoverSelection,
+        apply: @escaping @MainActor (OverviewChartHoverSelection) -> Void
+    ) {
+        pendingSelection = selection
+        guard scheduledTask == nil else {
+            return
+        }
+
+        scheduledTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Self.frameIntervalNanoseconds)
+            } catch {
+                return
+            }
+            guard let self, let selection = self.pendingSelection else {
+                return
+            }
+            self.pendingSelection = nil
+            self.scheduledTask = nil
+            apply(selection)
+        }
+    }
+
+    func cancel() {
+        pendingSelection = nil
+        scheduledTask?.cancel()
+        scheduledTask = nil
+    }
+}
+
+private struct OverviewChartPlot: View, Equatable {
+    let chartData: OverviewChartData
+    let yAxisMode: String
+    let selectedMinute: Date?
+    let barWidth: CGFloat
+    let xDomain: ClosedRange<Date>
+    let visibleXDomainLength: TimeInterval
+    let minBars: Int
+    let chartTopPadding: CGFloat
+    let chartBottomPadding: CGFloat
+
+    static func == (lhs: OverviewChartPlot, rhs: OverviewChartPlot) -> Bool {
+        lhs.chartData == rhs.chartData &&
+            lhs.yAxisMode == rhs.yAxisMode &&
+            lhs.selectedMinute == rhs.selectedMinute &&
+            lhs.barWidth == rhs.barWidth &&
+            lhs.xDomain == rhs.xDomain &&
+            lhs.visibleXDomainLength == rhs.visibleXDomainLength &&
+            lhs.minBars == rhs.minBars &&
+            lhs.chartTopPadding == rhs.chartTopPadding &&
+            lhs.chartBottomPadding == rhs.chartBottomPadding
+    }
+
+    var body: some View {
         Chart {
             if yAxisMode == "cost" {
-                ForEach(sortedBuckets) { bucket in
+                ForEach(chartData.sortedBuckets) { bucket in
                     BarMark(
                         x: .value("Minute", bucket.minute, unit: .minute),
                         y: .value("Cost", bucket.totalCostUsd),
@@ -69,7 +277,7 @@ struct OverviewChartView: View {
                     .foregroundStyle(Color.blue.opacity(0.7))
                 }
             } else {
-                ForEach(sortedSegments) { seg in
+                ForEach(chartData.sortedSegments) { seg in
                     BarMark(
                         x: .value("Minute", seg.minute, unit: .minute),
                         y: .value("Tokens", seg.count),
@@ -80,8 +288,8 @@ struct OverviewChartView: View {
                 }
             }
 
-            if let selectedBucket {
-                RuleMark(x: .value("Selected Minute", selectedBucket.minute, unit: .minute))
+            if let selectedMinute {
+                RuleMark(x: .value("Selected Minute", selectedMinute, unit: .minute))
                     .foregroundStyle(.secondary.opacity(0.35))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
@@ -122,69 +330,6 @@ struct OverviewChartView: View {
         }
         .padding(.top, chartTopPadding)
         .padding(.bottom, chartBottomPadding)
-        .chartOverlay { proxy in
-            GeometryReader { geometry in
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            updateSelection(at: location, proxy: proxy, geometry: geometry)
-                        case .ended:
-                            selectedBucket = nil
-                            hoverLocation = nil
-                        }
-                    }
-            }
-        }
-    }
-
-    // MARK: - Data helpers
-
-    private var sortedBuckets: [MinuteAggregation] {
-        buckets.sorted(by: { $0.minute < $1.minute })
-    }
-
-    private var sortedSegments: [BarSegment] {
-        buckets.toBarSegments()
-    }
-
-    // MARK: - Sizing
-
-    private var chartHeight: CGFloat { 320 }
-
-    private var chartWidth: CGFloat {
-        CGFloat(xSlotCount) * barSlotWidth
-    }
-
-    private var xSlotCount: Int {
-        guard let first = sortedBuckets.first?.minute,
-              let last = sortedBuckets.last?.minute else {
-            return minSlots
-        }
-        let span = max(last.timeIntervalSince(first), 0)
-        return max(Int(ceil(span / bucketInterval)) + 1, minSlots)
-    }
-
-    private var xDomain: ClosedRange<Date> {
-        guard let first = sortedBuckets.first?.minute,
-              let last = sortedBuckets.last?.minute else {
-            let now = Date()
-            return now.addingTimeInterval(-bucketInterval)...now.addingTimeInterval(bucketInterval)
-        }
-        let leading = first.addingTimeInterval(-bucketInterval)
-        let trailing = last.addingTimeInterval(bucketInterval)
-        return leading...trailing
-    }
-
-    private var visibleXDomainLength: TimeInterval {
-        let visibleSlots = min(max(xSlotCount, minSlots), 36)
-        return TimeInterval(max(visibleSlots - 1, 1)) * bucketInterval
-    }
-
-    private var minBars: Int {
-        min(max(xSlotCount, 4), 8)
     }
 
     private func formatYAxisValue(_ value: Double) -> String {
@@ -208,55 +353,17 @@ struct OverviewChartView: View {
         }
         return String(format: "%.1f%@", value, suffix)
     }
-
-    private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
-        guard let plotFrameAnchor = proxy.plotFrame else {
-            selectedBucket = nil
-            hoverLocation = nil
-            return
-        }
-        let plotFrame = geometry[plotFrameAnchor]
-        guard plotFrame.contains(location) else {
-            selectedBucket = nil
-            hoverLocation = nil
-            return
-        }
-
-        let relativeX = location.x - plotFrame.origin.x
-        guard let hoveredDate: Date = proxy.value(atX: relativeX) else {
-            selectedBucket = nil
-            hoverLocation = nil
-            return
-        }
-
-        selectedBucket = nearestBucket(to: hoveredDate)
-        hoverLocation = selectedBucket == nil ? nil : location
-    }
-
-    private func nearestBucket(to date: Date) -> MinuteAggregation? {
-        guard let nearest = sortedBuckets.min(by: {
-            abs($0.minute.timeIntervalSince(date)) < abs($1.minute.timeIntervalSince(date))
-        }) else {
-            return nil
-        }
-
-        let distance = abs(nearest.minute.timeIntervalSince(date))
-        return distance <= bucketInterval / 2 ? nearest : nil
-    }
-
-    private func tooltipPosition(for location: CGPoint, in size: CGSize) -> CGPoint {
-        let xOffset: CGFloat = 18
-        let yOffset: CGFloat = -88
-        let halfWidth = tooltipWidth / 2
-        let x = min(max(location.x + xOffset + halfWidth, halfWidth + 8), size.width - halfWidth - 8)
-        let y = max(location.y + yOffset, 18)
-        return CGPoint(x: x, y: y)
-    }
 }
 
-private struct OverviewChartTooltip: View {
+private struct OverviewChartTooltip: View, Equatable {
     let bucket: MinuteAggregation
     let yAxisMode: String
+
+    private static let minuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 
     private var chartedTotalTokens: Int {
         bucket.totalInputTokens + bucket.totalOutputTokens + bucket.totalCachedTokens
@@ -326,9 +433,7 @@ private struct OverviewChartTooltip: View {
     }
 
     private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
+        Self.minuteFormatter.string(from: date)
     }
 
     private func formatTokens(_ value: Int) -> String {
