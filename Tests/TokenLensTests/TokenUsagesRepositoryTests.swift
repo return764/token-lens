@@ -152,8 +152,10 @@ final class TokenUsagesRepositoryTests: XCTestCase {
         XCTAssertEqual(menuUsages[0].costUsd, 0.004, accuracy: 0.00001)
     }
 
-    func test_fetchMinuteAggregated_groupsBySingleMinute() throws {
+    func test_fetchHourlyAggregated_groupsByHourAndBounds() throws {
         let repo = TokenUsagesRepository(dbManager: dbManager)
+        let todayStart = try requireDate("2026-06-14T00:00:00Z")
+        let tomorrowStart = try requireDate("2026-06-15T00:00:00Z")
 
         try repo.insert(TokenUsage(
             id: "u-1", agenticTool: "codex", providerId: "openai",
@@ -167,33 +169,57 @@ final class TokenUsagesRepositoryTests: XCTestCase {
             model: "gpt-5",
             inputTokens: 20, outputTokens: 7, cachedInputTokens: 3,
             cacheWriteTokens: 0, reasoningTokens: 1, totalTokens: 31,
-            costUsd: 0.002, createdAt: try requireDate("2026-06-14T10:03:55Z")
+            costUsd: 0.002, createdAt: try requireDate("2026-06-14T10:53:55Z")
         ))
         try repo.insert(TokenUsage(
             id: "u-3", agenticTool: "codex", providerId: "openai",
             model: "gpt-5",
             inputTokens: 30, outputTokens: 9, cachedInputTokens: 4,
             cacheWriteTokens: 2, reasoningTokens: 0, totalTokens: 45,
-            costUsd: 0.003, createdAt: try requireDate("2026-06-14T10:04:01Z")
+            costUsd: 0.003, createdAt: try requireDate("2026-06-14T11:04:01Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "other-source", agenticTool: "pi", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 1, outputTokens: 1, cachedInputTokens: 1,
+            cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 5,
+            costUsd: 0.1, createdAt: try requireDate("2026-06-14T10:15:00Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "other-model", agenticTool: "codex", providerId: "openai",
+            model: "gpt-4.1-mini",
+            inputTokens: 1, outputTokens: 1, cachedInputTokens: 1,
+            cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 5,
+            costUsd: 0.1, createdAt: try requireDate("2026-06-14T10:20:00Z")
+        ))
+        try repo.insert(TokenUsage(
+            id: "tomorrow", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 99, outputTokens: 99, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 198,
+            costUsd: 0.2, createdAt: tomorrowStart
         ))
 
-        let buckets = try repo.fetchMinuteAggregated(
+        let buckets = try repo.fetchHourlyAggregated(
             source: "codex",
             provider: "openai",
-            model: "gpt-5"
+            model: "gpt-5",
+            since: todayStart,
+            before: tomorrowStart
         )
 
         XCTAssertEqual(buckets.count, 2)
-        XCTAssertEqual(buckets[0].minute, try requireDate("2026-06-14T10:03:00Z"))
+        XCTAssertEqual(buckets[0].hour, try requireDate("2026-06-14T10:00:00Z"))
         XCTAssertEqual(buckets[0].totalInputTokens, 30)
         XCTAssertEqual(buckets[0].totalOutputTokens, 12)
         XCTAssertEqual(buckets[0].totalCachedInputTokens, 5)
         XCTAssertEqual(buckets[0].totalCacheWriteTokens, 1)
         XCTAssertEqual(buckets[0].totalReasoningTokens, 1)
         XCTAssertEqual(buckets[0].totalTokens, 49)
+        XCTAssertEqual(buckets[0].totalCostUsd, 0.003, accuracy: 0.00001)
         XCTAssertEqual(buckets[0].requestCount, 2)
 
-        XCTAssertEqual(buckets[1].minute, try requireDate("2026-06-14T10:04:00Z"))
+        XCTAssertEqual(buckets[1].hour, try requireDate("2026-06-14T11:00:00Z"))
         XCTAssertEqual(buckets[1].totalInputTokens, 30)
         XCTAssertEqual(buckets[1].requestCount, 1)
     }

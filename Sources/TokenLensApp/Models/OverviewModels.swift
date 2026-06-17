@@ -2,11 +2,11 @@ import Foundation
 import SwiftUI
 import Charts
 
-// MARK: - MinuteAggregation (宽表：DB 聚合结果)
+// MARK: - OverviewBucket (wide table: DB aggregation result)
 
-/// 单个分钟桶的聚合数据（宽表格式，一条记录包含所有维度）。
-public struct MinuteAggregation: Identifiable, Equatable {
-    public let minute: Date
+/// Single hourly overview bucket with all tracked token dimensions.
+public struct OverviewBucket: Identifiable, Equatable {
+    public let hour: Date
     public let totalInputTokens: Int
     public let totalOutputTokens: Int
     public let totalCachedInputTokens: Int
@@ -16,11 +16,11 @@ public struct MinuteAggregation: Identifiable, Equatable {
     public let totalCostUsd: Double
     public let requestCount: Int
 
-    public var id: Date { minute }
+    public var id: Date { hour }
     public var totalCachedTokens: Int { totalCachedInputTokens + totalCacheWriteTokens }
 
     public init(
-        minute: Date,
+        hour: Date,
         totalInputTokens: Int,
         totalOutputTokens: Int,
         totalCachedInputTokens: Int,
@@ -30,7 +30,7 @@ public struct MinuteAggregation: Identifiable, Equatable {
         totalCostUsd: Double,
         requestCount: Int
     ) {
-        self.minute = minute
+        self.hour = hour
         self.totalInputTokens = totalInputTokens
         self.totalOutputTokens = totalOutputTokens
         self.totalCachedInputTokens = totalCachedInputTokens
@@ -44,10 +44,10 @@ public struct MinuteAggregation: Identifiable, Equatable {
 
 // MARK: - BarSegment (长表：Chart 堆叠数据)
 
-/// 单个分钟桶内的单条维度数据（供 Swift Charts 堆叠柱状图使用）。
+/// One token dimension inside a single overview bucket for Swift Charts stacking.
 struct BarSegment: Identifiable, Equatable {
-    let id: String       // "minute|dimension"，如 "2026-06-14T14:01:00|input"
-    let minute: Date
+    let id: String
+    let hour: Date
     let dimension: TokenDimension
     let count: Int
 }
@@ -77,23 +77,22 @@ enum TokenDimension: String, CaseIterable, Plottable {
 
 // MARK: - 宽表 → 长表转换
 
-extension MinuteAggregation {
-    /// 将一个 MinuteAggregation 拆成 3 个 BarSegment（input / output / cached），
-    /// 用于 Swift Charts 堆叠柱状图。
+extension OverviewBucket {
+    /// Split one overview bucket into input / output / cached segments for stacked charts.
     func toBarSegments() -> [BarSegment] {
-        let minuteKey = Int(minute.timeIntervalSinceReferenceDate)
+        let hourKey = Int(hour.timeIntervalSinceReferenceDate)
         return [
-            BarSegment(id: "\(minuteKey)|input",  minute: minute, dimension: .input,  count: totalInputTokens),
-            BarSegment(id: "\(minuteKey)|output", minute: minute, dimension: .output, count: totalOutputTokens),
-            BarSegment(id: "\(minuteKey)|cached", minute: minute, dimension: .cached, count: totalCachedTokens),
+            BarSegment(id: "\(hourKey)|input",  hour: hour, dimension: .input,  count: totalInputTokens),
+            BarSegment(id: "\(hourKey)|output", hour: hour, dimension: .output, count: totalOutputTokens),
+            BarSegment(id: "\(hourKey)|cached", hour: hour, dimension: .cached, count: totalCachedTokens),
         ]
     }
 }
 
-extension Array where Element == MinuteAggregation {
-    /// 将所有 MinuteAggregation 转为 BarSegment 集合，并按时间升序排列。
+extension Array where Element == OverviewBucket {
+    /// Convert overview buckets into chart segments sorted by hour.
     func toBarSegments() -> [BarSegment] {
-        self.sorted(by: { $0.minute < $1.minute })
+        self.sorted(by: { $0.hour < $1.hour })
             .flatMap { $0.toBarSegments() }
     }
 }
@@ -103,11 +102,11 @@ extension Array where Element == MinuteAggregation {
 /// Precomputed data used by OverviewChartView's high-frequency hover path.
 struct OverviewChartData: Equatable {
     let identity: OverviewChartDataIdentity
-    let sortedBuckets: [MinuteAggregation]
+    let sortedBuckets: [OverviewBucket]
     let sortedSegments: [BarSegment]
 
-    init(buckets: [MinuteAggregation]) {
-        sortedBuckets = buckets.sorted(by: { $0.minute < $1.minute })
+    init(buckets: [OverviewBucket]) {
+        sortedBuckets = buckets.sorted(by: { $0.hour < $1.hour })
         sortedSegments = sortedBuckets.flatMap { $0.toBarSegments() }
         identity = OverviewChartDataIdentity(buckets: sortedBuckets)
     }
@@ -116,7 +115,7 @@ struct OverviewChartData: Equatable {
         lhs.identity == rhs.identity
     }
 
-    func nearestBucket(to date: Date, maximumDistance: TimeInterval) -> MinuteAggregation? {
+    func nearestBucket(to date: Date, maximumDistance: TimeInterval) -> OverviewBucket? {
         guard !sortedBuckets.isEmpty else {
             return nil
         }
@@ -125,14 +124,14 @@ struct OverviewChartData: Equatable {
         var high = sortedBuckets.count
         while low < high {
             let middle = (low + high) / 2
-            if sortedBuckets[middle].minute < date {
+            if sortedBuckets[middle].hour < date {
                 low = middle + 1
             } else {
                 high = middle
             }
         }
 
-        let candidates = [low - 1, low].compactMap { index -> MinuteAggregation? in
+        let candidates = [low - 1, low].compactMap { index -> OverviewBucket? in
             guard sortedBuckets.indices.contains(index) else {
                 return nil
             }
@@ -140,29 +139,29 @@ struct OverviewChartData: Equatable {
         }
 
         guard let nearest = candidates.min(by: {
-            abs($0.minute.timeIntervalSince(date)) < abs($1.minute.timeIntervalSince(date))
+            abs($0.hour.timeIntervalSince(date)) < abs($1.hour.timeIntervalSince(date))
         }) else {
             return nil
         }
 
-        return abs(nearest.minute.timeIntervalSince(date)) <= maximumDistance ? nearest : nil
+        return abs(nearest.hour.timeIntervalSince(date)) <= maximumDistance ? nearest : nil
     }
 }
 
 struct OverviewChartDataIdentity: Equatable {
     let bucketCount: Int
-    let firstMinute: Date?
-    let lastMinute: Date?
+    let firstHour: Date?
+    let lastHour: Date?
     let valueHash: Int
 
-    init(buckets: [MinuteAggregation]) {
+    init(buckets: [OverviewBucket]) {
         bucketCount = buckets.count
-        firstMinute = buckets.first?.minute
-        lastMinute = buckets.last?.minute
+        firstHour = buckets.first?.hour
+        lastHour = buckets.last?.hour
 
         var hasher = Hasher()
         for bucket in buckets {
-            hasher.combine(bucket.minute)
+            hasher.combine(bucket.hour)
             hasher.combine(bucket.totalInputTokens)
             hasher.combine(bucket.totalOutputTokens)
             hasher.combine(bucket.totalCachedInputTokens)

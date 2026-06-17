@@ -109,17 +109,20 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_appState_refreshOverview_limitsOverviewToMostRecentDay() throws {
+    func test_appState_refreshOverview_staysOnTodayWhenTimeRangeIsAll() throws {
         let dbManager = try DatabaseManager(kind: .inMemory)
         let repo = TokenUsagesRepository(dbManager: dbManager)
+        let calendar = Calendar.current
         let now = Date()
+        let todayStart = calendar.startOfDay(for: now)
+        let tomorrowStart = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: todayStart))
 
         try repo.insert(TokenUsage(
             id: "old-1", agenticTool: "pi", providerId: "anthropic",
             model: "claude-sonnet-4-20250514",
             inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
             cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 150,
-            costUsd: 0.003, createdAt: now.addingTimeInterval(-2 * 24 * 60 * 60)
+            costUsd: 0.003, createdAt: todayStart.addingTimeInterval(-2 * 24 * 60 * 60)
         ))
         try repo.insert(TokenUsage(
             id: "new-1", agenticTool: "codex", providerId: "openai",
@@ -128,10 +131,19 @@ final class AppStateTests: XCTestCase {
             cacheWriteTokens: 5, reasoningTokens: 0, totalTokens: 315,
             costUsd: 0.0008, createdAt: now
         ))
+        try repo.insert(TokenUsage(
+            id: "future-1", agenticTool: "claude-code", providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 300, outputTokens: 100, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 400,
+            costUsd: 0.004, createdAt: tomorrowStart
+        ))
 
         let state = AppState(dbManager: dbManager, autoScanLocalRecords: false)
         state.setTimeRange(.all)
 
+        XCTAssertEqual(state.recentUsages.count, 3)
+        XCTAssertEqual(state.menuTotalTokens, 865)
         XCTAssertEqual(state.overviewAvailableSources, ["codex"])
         XCTAssertEqual(state.overviewSource, "codex")
         XCTAssertEqual(state.overviewProvider, "openai")

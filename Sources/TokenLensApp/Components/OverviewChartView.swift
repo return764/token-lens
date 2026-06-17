@@ -1,10 +1,9 @@
 import SwiftUI
 import Charts
 
-/// 按分钟聚合的 token 消耗堆叠柱状图。
-/// 少量数据时铺满容器，长时间跨度时按分钟槽位横向滚动。
+/// Hourly token consumption stacked bar chart for today's overview.
 struct OverviewChartView: View {
-    let buckets: [MinuteAggregation]
+    let buckets: [OverviewBucket]
     let yAxisMode: String  // "tokens" or "cost"
     private let chartData: OverviewChartData
 
@@ -13,13 +12,13 @@ struct OverviewChartView: View {
 
     private let barWidth: CGFloat = 6
     private let tooltipWidth: CGFloat = 260
-    private let minSlots = 6
-    private let bucketInterval: TimeInterval = 60
+    private let hoursInDay = 24
+    private let bucketInterval: TimeInterval = 60 * 60
     private let chartTopPadding: CGFloat = 6
     private let chartBottomPadding: CGFloat = 8
     private let tooltipMoveThreshold: CGFloat = 0.5
 
-    init(buckets: [MinuteAggregation], yAxisMode: String) {
+    init(buckets: [OverviewBucket], yAxisMode: String) {
         self.buckets = buckets
         self.yAxisMode = yAxisMode
         self.chartData = OverviewChartData(buckets: buckets)
@@ -68,11 +67,11 @@ struct OverviewChartView: View {
         OverviewChartPlot(
             chartData: chartData,
             yAxisMode: yAxisMode,
-            selectedMinute: hoverSelection?.bucket.minute,
+            selectedHour: hoverSelection?.bucket.hour,
             barWidth: barWidth,
             xDomain: xDomain,
             visibleXDomainLength: visibleXDomainLength,
-            minBars: minBars,
+            xAxisValues: xAxisValues,
             chartTopPadding: chartTopPadding,
             chartBottomPadding: chartBottomPadding
         )
@@ -99,32 +98,32 @@ struct OverviewChartView: View {
     private var chartHeight: CGFloat { 320 }
 
     private var xSlotCount: Int {
-        guard let first = chartData.sortedBuckets.first?.minute,
-              let last = chartData.sortedBuckets.last?.minute else {
-            return minSlots
-        }
-        let span = max(last.timeIntervalSince(first), 0)
-        return max(Int(ceil(span / bucketInterval)) + 1, minSlots)
+        hoursInDay
     }
 
     private var xDomain: ClosedRange<Date> {
-        guard let first = chartData.sortedBuckets.first?.minute,
-              let last = chartData.sortedBuckets.last?.minute else {
-            let now = Date()
-            return now.addingTimeInterval(-bucketInterval)...now.addingTimeInterval(bucketInterval)
-        }
-        let leading = first.addingTimeInterval(-bucketInterval)
-        let trailing = last.addingTimeInterval(bucketInterval)
-        return leading...trailing
+        let start = todayStart.addingTimeInterval(-bucketInterval / 2)
+        let end = todayEnd.addingTimeInterval(-bucketInterval / 2)
+        return start...end
     }
 
     private var visibleXDomainLength: TimeInterval {
-        let visibleSlots = min(max(xSlotCount, minSlots), 36)
-        return TimeInterval(max(visibleSlots - 1, 1)) * bucketInterval
+        TimeInterval(xSlotCount) * bucketInterval
     }
 
-    private var minBars: Int {
-        min(max(xSlotCount, 4), 8)
+    private var xAxisValues: [Date] {
+        let calendar = Calendar.current
+        return (0..<hoursInDay).compactMap { hour in
+            calendar.date(byAdding: .hour, value: hour, to: todayStart)
+        }
+    }
+
+    private var todayStart: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
+    private var todayEnd: Date {
+        Calendar.current.date(byAdding: .day, value: 1, to: todayStart) ?? todayStart.addingTimeInterval(24 * bucketInterval)
     }
 
     private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
@@ -159,7 +158,7 @@ struct OverviewChartView: View {
         }
     }
 
-    private func updateHoverSelection(bucket: MinuteAggregation, location: CGPoint) {
+    private func updateHoverSelection(bucket: OverviewBucket, location: CGPoint) {
         let nextSelection = OverviewChartHoverSelection(bucket: bucket, location: location)
 
         guard let currentSelection = hoverSelection else {
@@ -199,7 +198,7 @@ struct OverviewChartView: View {
 }
 
 private struct OverviewChartHoverSelection: Equatable {
-    let bucket: MinuteAggregation
+    let bucket: OverviewBucket
     let location: CGPoint
 }
 
@@ -244,22 +243,22 @@ private final class OverviewChartHoverUpdateCoordinator: ObservableObject {
 private struct OverviewChartPlot: View, Equatable {
     let chartData: OverviewChartData
     let yAxisMode: String
-    let selectedMinute: Date?
+    let selectedHour: Date?
     let barWidth: CGFloat
     let xDomain: ClosedRange<Date>
     let visibleXDomainLength: TimeInterval
-    let minBars: Int
+    let xAxisValues: [Date]
     let chartTopPadding: CGFloat
     let chartBottomPadding: CGFloat
 
     static func == (lhs: OverviewChartPlot, rhs: OverviewChartPlot) -> Bool {
         lhs.chartData == rhs.chartData &&
             lhs.yAxisMode == rhs.yAxisMode &&
-            lhs.selectedMinute == rhs.selectedMinute &&
+            lhs.selectedHour == rhs.selectedHour &&
             lhs.barWidth == rhs.barWidth &&
             lhs.xDomain == rhs.xDomain &&
             lhs.visibleXDomainLength == rhs.visibleXDomainLength &&
-            lhs.minBars == rhs.minBars &&
+            lhs.xAxisValues == rhs.xAxisValues &&
             lhs.chartTopPadding == rhs.chartTopPadding &&
             lhs.chartBottomPadding == rhs.chartBottomPadding
     }
@@ -269,7 +268,7 @@ private struct OverviewChartPlot: View, Equatable {
             if yAxisMode == "cost" {
                 ForEach(chartData.sortedBuckets) { bucket in
                     BarMark(
-                        x: .value("Minute", bucket.minute, unit: .minute),
+                        x: .value("Hour", bucket.hour, unit: .hour),
                         y: .value("Cost", bucket.totalCostUsd),
                         width: .fixed(barWidth),
                         stacking: .standard
@@ -279,7 +278,7 @@ private struct OverviewChartPlot: View, Equatable {
             } else {
                 ForEach(chartData.sortedSegments) { seg in
                     BarMark(
-                        x: .value("Minute", seg.minute, unit: .minute),
+                        x: .value("Hour", seg.hour, unit: .hour),
                         y: .value("Tokens", seg.count),
                         width: .fixed(barWidth),
                         stacking: .standard
@@ -288,8 +287,8 @@ private struct OverviewChartPlot: View, Equatable {
                 }
             }
 
-            if let selectedMinute {
-                RuleMark(x: .value("Selected Minute", selectedMinute, unit: .minute))
+            if let selectedHour {
+                RuleMark(x: .value("Selected Hour", selectedHour, unit: .hour))
                     .foregroundStyle(.secondary.opacity(0.35))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
@@ -303,12 +302,12 @@ private struct OverviewChartPlot: View, Equatable {
         .chartScrollableAxes(.horizontal)
         .chartXVisibleDomain(length: visibleXDomainLength)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: minBars)) { value in
+            AxisMarks(values: xAxisValues) { value in
                 AxisGridLine()
                 AxisTick()
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
-                        Text(date, format: .dateTime.hour().minute())
+                        Text(date, format: .dateTime.hour())
                             .padding(.top, 8)
                             .fixedSize()
                     }
@@ -356,12 +355,12 @@ private struct OverviewChartPlot: View, Equatable {
 }
 
 private struct OverviewChartTooltip: View, Equatable {
-    let bucket: MinuteAggregation
+    let bucket: OverviewBucket
     let yAxisMode: String
 
-    private static let minuteFormatter: DateFormatter = {
+    private static let hourFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.dateFormat = "yyyy-MM-dd HH:00"
         return formatter
     }()
 
@@ -372,7 +371,7 @@ private struct OverviewChartTooltip: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text(formatDate(bucket.minute))
+                Text(formatDate(bucket.hour))
                     .fontWeight(.semibold)
                 Spacer(minLength: 12)
                 Text(primaryValue)
@@ -433,7 +432,7 @@ private struct OverviewChartTooltip: View, Equatable {
     }
 
     private func formatDate(_ date: Date) -> String {
-        Self.minuteFormatter.string(from: date)
+        Self.hourFormatter.string(from: date)
     }
 
     private func formatTokens(_ value: Int) -> String {

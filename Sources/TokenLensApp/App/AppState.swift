@@ -45,7 +45,7 @@ public final class AppState: ObservableObject {
     @Published public var menuTotalCostUsd: Double = 0
 
     // MARK: - Overview (chart)
-    @Published public var overviewBuckets: [MinuteAggregation] = []
+    @Published public var overviewBuckets: [OverviewBucket] = []
     @Published public var overviewSource: String = ""
     @Published public var overviewProvider: String = ""
     @Published public var overviewModel: String = ""
@@ -53,8 +53,7 @@ public final class AppState: ObservableObject {
     @Published public var overviewAvailableProviders: [String] = []
     @Published public var overviewAvailableModels: [String] = []
     @Published public var overviewYAxis: String = "tokens"  // "tokens" or "cost"
-    private static let overviewMaximumRange: TimeInterval = 24 * 60 * 60
-    private static let overviewMaximumBuckets = 24 * 60
+    private static let overviewMaximumBuckets = 24
 
     // MARK: - Repos
     private let tokenUsagesRepo: TokenUsagesRepository
@@ -163,8 +162,8 @@ public final class AppState: ObservableObject {
     /// 全量刷新 overview 数据：可选列表 + 聚合。首次调用时自动初始化选中项。
     public func refreshOverview() {
         do {
-            let since = overviewStartDate
-            overviewAvailableSources = try tokenUsagesRepo.fetchDistinctSources(since: since)
+            let bounds = overviewBounds
+            overviewAvailableSources = try tokenUsagesRepo.fetchDistinctSources(since: bounds.start, before: bounds.end)
 
             guard !overviewAvailableSources.isEmpty else {
                 clearOverviewSelection()
@@ -178,7 +177,8 @@ public final class AppState: ObservableObject {
 
             overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(
                 for: overviewSource,
-                since: since
+                since: bounds.start,
+                before: bounds.end
             )
             if overviewProvider.isEmpty || !overviewAvailableProviders.contains(overviewProvider) {
                 overviewProvider = overviewAvailableProviders.first ?? ""
@@ -194,7 +194,8 @@ public final class AppState: ObservableObject {
             overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
                 for: overviewSource,
                 provider: overviewProvider,
-                since: since
+                since: bounds.start,
+                before: bounds.end
             )
             if overviewModel.isEmpty || !overviewAvailableModels.contains(overviewModel) {
                 overviewModel = overviewAvailableModels.first ?? ""
@@ -205,11 +206,12 @@ public final class AppState: ObservableObject {
                 return
             }
 
-            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+            overviewBuckets = try tokenUsagesRepo.fetchHourlyAggregated(
                 source: overviewSource,
                 provider: overviewProvider,
                 model: overviewModel,
-                since: since,
+                since: bounds.start,
+                before: bounds.end,
                 maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
@@ -222,8 +224,12 @@ public final class AppState: ObservableObject {
         guard source != overviewSource else { return }
         overviewSource = source
         do {
-            let since = overviewStartDate
-            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(for: source, since: since)
+            let bounds = overviewBounds
+            overviewAvailableProviders = try tokenUsagesRepo.fetchDistinctProviders(
+                for: source,
+                since: bounds.start,
+                before: bounds.end
+            )
             overviewProvider = overviewAvailableProviders.first ?? ""
 
             guard !overviewProvider.isEmpty else {
@@ -236,7 +242,8 @@ public final class AppState: ObservableObject {
             overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
                 for: source,
                 provider: overviewProvider,
-                since: since
+                since: bounds.start,
+                before: bounds.end
             )
             overviewModel = overviewAvailableModels.first ?? ""
 
@@ -245,11 +252,12 @@ public final class AppState: ObservableObject {
                 return
             }
 
-            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+            overviewBuckets = try tokenUsagesRepo.fetchHourlyAggregated(
                 source: source,
                 provider: overviewProvider,
                 model: overviewModel,
-                since: since,
+                since: bounds.start,
+                before: bounds.end,
                 maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
@@ -262,11 +270,12 @@ public final class AppState: ObservableObject {
         guard provider != overviewProvider else { return }
         overviewProvider = provider
         do {
-            let since = overviewStartDate
+            let bounds = overviewBounds
             overviewAvailableModels = try tokenUsagesRepo.fetchDistinctModels(
                 for: overviewSource,
                 provider: provider,
-                since: since
+                since: bounds.start,
+                before: bounds.end
             )
             overviewModel = overviewAvailableModels.first ?? ""
 
@@ -275,11 +284,12 @@ public final class AppState: ObservableObject {
                 return
             }
 
-            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+            overviewBuckets = try tokenUsagesRepo.fetchHourlyAggregated(
                 source: overviewSource,
                 provider: provider,
                 model: overviewModel,
-                since: since,
+                since: bounds.start,
+                before: bounds.end,
                 maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
@@ -292,11 +302,13 @@ public final class AppState: ObservableObject {
         guard model != overviewModel else { return }
         overviewModel = model
         do {
-            overviewBuckets = try tokenUsagesRepo.fetchMinuteAggregated(
+            let bounds = overviewBounds
+            overviewBuckets = try tokenUsagesRepo.fetchHourlyAggregated(
                 source: overviewSource,
                 provider: overviewProvider,
                 model: model,
-                since: overviewStartDate,
+                since: bounds.start,
+                before: bounds.end,
                 maxBuckets: Self.overviewMaximumBuckets
             )
         } catch {
@@ -309,12 +321,11 @@ public final class AppState: ObservableObject {
         overviewYAxis = mode
     }
 
-    private var overviewStartDate: Date {
-        let oneDayAgo = Date().addingTimeInterval(-Self.overviewMaximumRange)
-        guard let rangeStart = timeRange.startDate else {
-            return oneDayAgo
-        }
-        return max(rangeStart, oneDayAgo)
+    private var overviewBounds: (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(24 * 60 * 60)
+        return (start, end)
     }
 
     private func clearOverviewSelection() {
