@@ -224,6 +224,70 @@ final class TokenUsagesRepositoryTests: XCTestCase {
         XCTAssertEqual(buckets[1].requestCount, 1)
     }
 
+    func test_fetchDailyAggregated_groupsByLocalDayAndBounds() throws {
+        let repo = TokenUsagesRepository(dbManager: dbManager)
+        let calendar = Calendar.current
+        let dayStart = try requireLocalDate(year: 2026, month: 6, day: 14)
+        let nextDayStart = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: dayStart))
+        let end = try XCTUnwrap(calendar.date(byAdding: .day, value: 2, to: dayStart))
+
+        try repo.insert(TokenUsage(
+            id: "before-start", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 999, outputTokens: 999, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 1_998,
+            costUsd: 9, createdAt: dayStart.addingTimeInterval(-1)
+        ))
+        try repo.insert(TokenUsage(
+            id: "start-inclusive", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 10, outputTokens: 5, cachedInputTokens: 2,
+            cacheWriteTokens: 1, reasoningTokens: 0, totalTokens: 18,
+            costUsd: 0.001, createdAt: dayStart
+        ))
+        try repo.insert(TokenUsage(
+            id: "same-local-day-other-source", agenticTool: "pi", providerId: "anthropic",
+            model: "claude-sonnet-4-20250514",
+            inputTokens: 20, outputTokens: 7, cachedInputTokens: 3,
+            cacheWriteTokens: 4, reasoningTokens: 6, totalTokens: 40,
+            costUsd: 0.002, createdAt: nextDayStart.addingTimeInterval(-60)
+        ))
+        try repo.insert(TokenUsage(
+            id: "next-local-day", agenticTool: "claude_code", providerId: "anthropic",
+            model: nil,
+            inputTokens: 30, outputTokens: 9, cachedInputTokens: 4,
+            cacheWriteTokens: 2, reasoningTokens: 1, totalTokens: 46,
+            costUsd: 0.003, createdAt: nextDayStart.addingTimeInterval(15 * 60)
+        ))
+        try repo.insert(TokenUsage(
+            id: "end-exclusive", agenticTool: "codex", providerId: "openai",
+            model: "gpt-5",
+            inputTokens: 888, outputTokens: 888, cachedInputTokens: 0,
+            cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 1_776,
+            costUsd: 8, createdAt: end
+        ))
+
+        let buckets = try repo.fetchDailyAggregated(since: dayStart, before: end)
+
+        XCTAssertEqual(buckets.count, 2)
+        XCTAssertEqual(buckets[0].day, dayStart)
+        XCTAssertEqual(buckets[0].totalInputTokens, 30)
+        XCTAssertEqual(buckets[0].totalOutputTokens, 12)
+        XCTAssertEqual(buckets[0].totalCachedInputTokens, 5)
+        XCTAssertEqual(buckets[0].totalCacheWriteTokens, 5)
+        XCTAssertEqual(buckets[0].totalReasoningTokens, 6)
+        XCTAssertEqual(buckets[0].totalTokens, 58)
+        XCTAssertEqual(buckets[0].totalCostUsd, 0.003, accuracy: 0.00001)
+        XCTAssertEqual(buckets[0].requestCount, 2)
+
+        XCTAssertEqual(buckets[1].day, nextDayStart)
+        XCTAssertEqual(buckets[1].totalInputTokens, 30)
+        XCTAssertEqual(buckets[1].totalOutputTokens, 9)
+        XCTAssertEqual(buckets[1].totalTokens, 46)
+        XCTAssertEqual(buckets[1].totalCostUsd, 0.003, accuracy: 0.00001)
+        XCTAssertEqual(buckets[1].requestCount, 1)
+    }
+
     func test_distinctOverviewFilters_respectSince() throws {
         let repo = TokenUsagesRepository(dbManager: dbManager)
         let now = Date()
@@ -253,5 +317,9 @@ final class TokenUsagesRepositoryTests: XCTestCase {
 
     private func requireDate(_ text: String) throws -> Date {
         try XCTUnwrap(ISO8601DateCoding.parse(text))
+    }
+
+    private func requireLocalDate(year: Int, month: Int, day: Int) throws -> Date {
+        try XCTUnwrap(Calendar.current.date(from: DateComponents(year: year, month: month, day: day)))
     }
 }

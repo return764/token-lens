@@ -174,6 +174,41 @@ public final class TokenUsagesRepository {
         }
     }
 
+    /// Aggregate token usage by local calendar day for the Dashboard heatmap.
+    /// Bounds are inclusive `since`, exclusive `before`.
+    public func fetchDailyAggregated(
+        since: Date,
+        before: Date
+    ) throws -> [DailyUsageBucket] {
+        try dbManager.reader.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT
+                      date(created_at, 'localtime') AS day,
+                      SUM(input_tokens)        AS total_input,
+                      SUM(output_tokens)       AS total_output,
+                      SUM(cached_input_tokens) AS total_cached_input,
+                      SUM(cache_write_tokens)  AS total_cache_write,
+                      SUM(reasoning_tokens)    AS total_reasoning,
+                      SUM(total_tokens)        AS total_all,
+                      SUM(cost_usd)            AS total_cost,
+                      COUNT(*)                 AS request_count
+                    FROM token_usages
+                    WHERE created_at >= ?
+                      AND created_at < ?
+                    GROUP BY day
+                    ORDER BY day ASC
+                    """,
+                arguments: [
+                    ISO8601DateCoding.string(from: since),
+                    ISO8601DateCoding.string(from: before)
+                ]
+            )
+            return rows.compactMap(Self.dailyAggregationFromRow)
+        }
+    }
+
     /// 获取数据库中所有出现过的 agentic_tool（source）列表，按字母排序。
     public func fetchDistinctSources(since: Date? = nil, before: Date? = nil) throws -> [String] {
         try dbManager.reader.read { db in
@@ -267,6 +302,33 @@ public final class TokenUsagesRepository {
             requestCount: row["request_count"] ?? 0
         )
     }
+
+    private static func dailyAggregationFromRow(_ row: Row) -> DailyUsageBucket? {
+        guard let dayStr = row["day"] as String?,
+              let day = localDayFormatter.date(from: dayStr) else {
+            return nil
+        }
+
+        return DailyUsageBucket(
+            day: day,
+            totalInputTokens: row["total_input"] ?? 0,
+            totalOutputTokens: row["total_output"] ?? 0,
+            totalCachedInputTokens: row["total_cached_input"] ?? 0,
+            totalCacheWriteTokens: row["total_cache_write"] ?? 0,
+            totalReasoningTokens: row["total_reasoning"] ?? 0,
+            totalTokens: row["total_all"] ?? 0,
+            totalCostUsd: row["total_cost"] ?? 0,
+            requestCount: row["request_count"] ?? 0
+        )
+    }
+
+    private static let localDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 
     private static func tokenUsageFromRow(_ row: Row) -> TokenUsage {
         return TokenUsage(

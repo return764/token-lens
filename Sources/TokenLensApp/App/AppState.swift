@@ -55,6 +55,9 @@ public final class AppState: ObservableObject {
     @Published public var overviewYAxis: String = "tokens"  // "tokens" or "cost"
     private static let overviewMaximumBuckets = 24
 
+    // MARK: - Daily heatmap
+    @Published public var dailyUsageBuckets: [DailyUsageBucket] = []
+
     // MARK: - Repos
     private let tokenUsagesRepo: TokenUsagesRepository
     private let settingsRepo: SettingsRepository
@@ -93,6 +96,7 @@ public final class AppState: ObservableObject {
                 guard let self else { return }
                 self.handleLiveTokensImported(inputTokens: inputTokens, outputTokens: outputTokens, costUsd: costUsd)
                 self.refreshOverview()
+                self.refreshDailyUsageHeatmap()
             }
         }
 
@@ -138,6 +142,7 @@ public final class AppState: ObservableObject {
             print("[TokenLens] refresh error: \(error)")
         }
         refreshOverview()
+        refreshDailyUsageHeatmap()
     }
 
     public func refreshMenuData() {
@@ -335,6 +340,35 @@ public final class AppState: ObservableObject {
         overviewAvailableProviders = []
         overviewAvailableModels = []
         overviewBuckets = []
+    }
+
+    // MARK: - Daily heatmap
+
+    public func refreshDailyUsageHeatmap() {
+        do {
+            let bounds = dailyUsageHeatmapBounds
+            dailyUsageBuckets = try tokenUsagesRepo.fetchDailyAggregated(
+                since: bounds.start,
+                before: bounds.end
+            )
+        } catch {
+            print("[TokenLens] refreshDailyUsageHeatmap error: \(error)")
+        }
+    }
+
+    public var dailyUsageHeatmapBounds: (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: today)
+        let daysFromWeekStart = (weekday - calendar.firstWeekday + 7) % 7
+        let currentWeekStart = calendar.date(byAdding: .day, value: -daysFromWeekStart, to: today) ?? today
+        let start = calendar.date(
+            byAdding: .weekOfYear,
+            value: -(DailyUsageHeatmapData.weekCount - 1),
+            to: currentWeekStart
+        ) ?? currentWeekStart
+        let end = calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(24 * 60 * 60)
+        return (start, end)
     }
 
     // MARK: - Menu bar display cycling

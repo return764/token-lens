@@ -13,4 +13,11 @@ final class DashboardPageTests: XCTestCase {
         XCTAssertTrue(DashboardPage.sources.isDetailPage)
         XCTAssertTrue(DashboardPage.settings.isDetailPage)
     }
+
+    func test_dashboardPage_ownsDailyUsageHeatmap() {
+        XCTAssertTrue(DashboardPage.dashboard.showsDailyUsageHeatmap)
+        XCTAssertFalse(DashboardPage.usage.showsDailyUsageHeatmap)
+        XCTAssertFalse(DashboardPage.sources.showsDailyUsageHeatmap)
+        XCTAssertFalse(DashboardPage.settings.showsDailyUsageHeatmap)
+    }
 }

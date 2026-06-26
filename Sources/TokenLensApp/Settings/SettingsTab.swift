@@ -31,6 +31,10 @@ enum DashboardPage: String, CaseIterable, Identifiable {
     var isDetailPage: Bool {
         self != .dashboard
     }
+
+    var showsDailyUsageHeatmap: Bool {
+        self == .dashboard
+    }
 }
 
 struct SettingsTab: View {
@@ -90,6 +94,8 @@ struct SettingsTab: View {
         pageScroll {
             VStack(alignment: .leading, spacing: 18) {
                 dashboardSummary
+                Divider()
+                DailyUsageHeatmapView(buckets: appState.dailyUsageBuckets)
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Overview")

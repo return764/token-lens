@@ -174,3 +174,207 @@ struct OverviewChartDataIdentity: Equatable {
         valueHash = hasher.finalize()
     }
 }
+
+// MARK: - Daily Usage Heatmap
+
+/// Single local-day usage aggregate for the Dashboard heatmap.
+public struct DailyUsageBucket: Identifiable, Equatable {
+    public let day: Date
+    public let totalInputTokens: Int
+    public let totalOutputTokens: Int
+    public let totalCachedInputTokens: Int
+    public let totalCacheWriteTokens: Int
+    public let totalReasoningTokens: Int
+    public let totalTokens: Int
+    public let totalCostUsd: Double
+    public let requestCount: Int
+
+    public var id: Date { day }
+    public var totalCachedTokens: Int { totalCachedInputTokens + totalCacheWriteTokens }
+
+    public init(
+        day: Date,
+        totalInputTokens: Int,
+        totalOutputTokens: Int,
+        totalCachedInputTokens: Int,
+        totalCacheWriteTokens: Int,
+        totalReasoningTokens: Int,
+        totalTokens: Int,
+        totalCostUsd: Double,
+        requestCount: Int
+    ) {
+        self.day = day
+        self.totalInputTokens = totalInputTokens
+        self.totalOutputTokens = totalOutputTokens
+        self.totalCachedInputTokens = totalCachedInputTokens
+        self.totalCacheWriteTokens = totalCacheWriteTokens
+        self.totalReasoningTokens = totalReasoningTokens
+        self.totalTokens = totalTokens
+        self.totalCostUsd = totalCostUsd
+        self.requestCount = requestCount
+    }
+}
+
+enum DailyUsageHeatmapIntensityBasis: Equatable {
+    case cost
+    case tokens
+    case none
+}
+
+struct DailyUsageHeatmapCell: Identifiable, Equatable {
+    let date: Date
+    let weekIndex: Int
+    let weekdayIndex: Int
+    let bucket: DailyUsageBucket
+    let intensityLevel: Int
+    let isFuture: Bool
+
+    var id: Date { date }
+    var hasUsage: Bool { bucket.requestCount > 0 }
+}
+
+struct DailyUsageHeatmapMonthLabel: Identifiable, Equatable {
+    let title: String
+    let weekIndex: Int
+
+    var id: String { "\(title)-\(weekIndex)" }
+}
+
+struct DailyUsageHeatmapData: Equatable {
+    static let weekCount = 53
+    static let daysPerWeek = 7
+    static let cellCount = weekCount * daysPerWeek
+
+    let cells: [DailyUsageHeatmapCell]
+    let monthLabels: [DailyUsageHeatmapMonthLabel]
+    let intensityBasis: DailyUsageHeatmapIntensityBasis
+    let startDate: Date
+    let endDate: Date
+
+    init(
+        buckets: [DailyUsageBucket],
+        endDate: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        let endDay = calendar.startOfDay(for: endDate)
+        let endWeekStart = Self.startOfWeek(containing: endDay, calendar: calendar)
+        let startDay = calendar.date(byAdding: .weekOfYear, value: -(Self.weekCount - 1), to: endWeekStart) ?? endWeekStart
+        let bucketByDay = Dictionary(uniqueKeysWithValues: buckets.map { bucket in
+            (calendar.startOfDay(for: bucket.day), bucket)
+        })
+        let basis = Self.intensityBasis(for: Array(bucketByDay.values))
+
+        self.startDate = startDay
+        self.endDate = endDay
+        self.intensityBasis = basis
+
+        let maxCost = bucketByDay.values.map(\.totalCostUsd).max() ?? 0
+        let maxTokens = bucketByDay.values.map(\.totalTokens).max() ?? 0
+
+        self.cells = (0..<Self.cellCount).compactMap { offset -> DailyUsageHeatmapCell? in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: startDay) else {
+                return nil
+            }
+
+            let day = calendar.startOfDay(for: date)
+            let emptyBucket = DailyUsageBucket(
+                day: day,
+                totalInputTokens: 0,
+                totalOutputTokens: 0,
+                totalCachedInputTokens: 0,
+                totalCacheWriteTokens: 0,
+                totalReasoningTokens: 0,
+                totalTokens: 0,
+                totalCostUsd: 0,
+                requestCount: 0
+            )
+            let bucket = bucketByDay[day] ?? emptyBucket
+            return DailyUsageHeatmapCell(
+                date: day,
+                weekIndex: offset / Self.daysPerWeek,
+                weekdayIndex: offset % Self.daysPerWeek,
+                bucket: bucket,
+                intensityLevel: Self.intensityLevel(for: bucket, basis: basis, maxCost: maxCost, maxTokens: maxTokens),
+                isFuture: day > endDay
+            )
+        }
+
+        self.monthLabels = Self.makeMonthLabels(cells: cells, calendar: calendar)
+    }
+
+    func cell(on date: Date, calendar: Calendar = .current) -> DailyUsageHeatmapCell? {
+        let day = calendar.startOfDay(for: date)
+        return cells.first { calendar.isDate($0.date, inSameDayAs: day) }
+    }
+
+    private static func startOfWeek(containing date: Date, calendar: Calendar) -> Date {
+        let weekday = calendar.component(.weekday, from: date)
+        let daysFromWeekStart = (weekday - calendar.firstWeekday + daysPerWeek) % daysPerWeek
+        return calendar.date(byAdding: .day, value: -daysFromWeekStart, to: date) ?? date
+    }
+
+    private static func intensityBasis(for buckets: [DailyUsageBucket]) -> DailyUsageHeatmapIntensityBasis {
+        if buckets.contains(where: { $0.totalCostUsd > 0 }) {
+            return .cost
+        }
+        if buckets.contains(where: { $0.totalTokens > 0 }) {
+            return .tokens
+        }
+        return .none
+    }
+
+    private static func intensityLevel(
+        for bucket: DailyUsageBucket,
+        basis: DailyUsageHeatmapIntensityBasis,
+        maxCost: Double,
+        maxTokens: Int
+    ) -> Int {
+        switch basis {
+        case .cost:
+            guard bucket.totalCostUsd > 0, maxCost > 0 else { return 0 }
+            return scaledLevel(value: bucket.totalCostUsd, maxValue: maxCost)
+        case .tokens:
+            guard bucket.totalTokens > 0, maxTokens > 0 else { return 0 }
+            return scaledLevel(value: Double(bucket.totalTokens), maxValue: Double(maxTokens))
+        case .none:
+            return 0
+        }
+    }
+
+    private static func scaledLevel(value: Double, maxValue: Double) -> Int {
+        let ratio = min(max(value / maxValue, 0), 1)
+        return max(1, min(4, Int(ceil(ratio * 4))))
+    }
+
+    private static func makeMonthLabels(
+        cells: [DailyUsageHeatmapCell],
+        calendar: Calendar
+    ) -> [DailyUsageHeatmapMonthLabel] {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.dateFormat = "MMM"
+
+        var labels: [DailyUsageHeatmapMonthLabel] = []
+        var seenMonths = Set<String>()
+
+        for cell in cells {
+            let components = calendar.dateComponents([.year, .month, .day], from: cell.date)
+            guard let year = components.year, let month = components.month else {
+                continue
+            }
+            let key = "\(year)-\(month)"
+            let isFirstVisibleDayOfMonth = components.day == 1 || labels.isEmpty
+            guard isFirstVisibleDayOfMonth, !seenMonths.contains(key) else {
+                continue
+            }
+
+            seenMonths.insert(key)
+            labels.append(DailyUsageHeatmapMonthLabel(
+                title: formatter.string(from: cell.date),
+                weekIndex: cell.weekIndex
+            ))
+        }
+
+        return labels
+    }
+}
