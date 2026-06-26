@@ -2,9 +2,9 @@ import XCTest
 @testable import TokenLensApp
 
 final class LocalUsageScannerTests: XCTestCase {
-    func test_defaultAdapters_areCodexClaudeCodeAndPi() {
+    func test_defaultAdapters_areCodexClaudeCodePiAndOpenCode() {
         let ids = LocalUsageScanner.defaultAdapters().map(\.id)
-        XCTAssertEqual(ids, ["codex", "claude_code", "pi"])
+        XCTAssertEqual(ids, ["codex", "claude_code", "pi", "opencode"])
     }
 
     func test_scanAll_recordsNotFoundWithoutFailingOtherSources() async throws {
@@ -90,12 +90,67 @@ final class LocalUsageScannerTests: XCTestCase {
         XCTAssertEqual(checkpoint.fileSize, content.utf8.count)
     }
 
+    func test_scanAll_usesUnifiedAdapterSessionReadPath() async throws {
+        let dbManager = try DatabaseManager(kind: .inMemory)
+        let repo = LocalScanRepository(dbManager: dbManager)
+        let root = try makeTempDirectory()
+        let file = root.appendingPathComponent("session.any")
+        try "not jsonl".write(to: file, atomically: true, encoding: .utf8)
+        let adapter = SpySessionReadAdapter(root: root, file: file)
+        let scanner = LocalUsageScanner(repository: repo, adapters: [adapter])
+
+        await scanner.scanAll()
+
+        XCTAssertEqual(adapter.readSessionChangesCallCount, 1)
+        XCTAssertEqual(try TokenUsagesRepository(dbManager: dbManager).fetchRecent(limit: 10).count, 1)
+    }
+
+    func test_importQueue_usesUnifiedAdapterSessionReadPath() async throws {
+        let dbManager = try DatabaseManager(kind: .inMemory)
+        let repo = LocalScanRepository(dbManager: dbManager)
+        let root = try makeTempDirectory()
+        let file = root.appendingPathComponent("session.any")
+        try "not jsonl".write(to: file, atomically: true, encoding: .utf8)
+        let adapter = SpySessionReadAdapter(root: root, file: file)
+        try repo.upsertSourceStatus(LocalScanSourceStatus(
+            sourceTool: "spy",
+            displayName: "Spy",
+            rootPath: root.path,
+            status: "watching",
+            lastScanStartedAt: nil,
+            lastScanFinishedAt: nil,
+            filesSeen: 1,
+            filesScanned: 0,
+            eventsImported: 0,
+            parseErrorCount: 0,
+            lastError: nil
+        ))
+        let queue = LocalSourceImportQueue(repository: repo, adapters: [adapter], debounceInterval: 0)
+
+        await queue.enqueue(sourceTool: "spy", paths: [file])
+        await queue.flushNow()
+        try await waitForUsageCount(dbManager: dbManager, expected: 1)
+
+        XCTAssertEqual(adapter.readSessionChangesCallCount, 1)
+    }
+
     private func makeTempDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TokenLensTests")
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func waitForUsageCount(dbManager: DatabaseManager, expected: Int) async throws {
+        let repository = TokenUsagesRepository(dbManager: dbManager)
+        for _ in 0..<20 {
+            if try repository.fetchRecent(limit: 10).count == expected {
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(try repository.fetchRecent(limit: 10).count, expected)
     }
 }
 
@@ -117,4 +172,72 @@ private struct StubLocalUsageAdapter: LocalUsageAdapter {
     func discoverFiles() throws -> [URL] { files }
     func parseFile(_ url: URL) throws -> [LocalUsageEvent] { try parseClosure(url) }
     func parseLines(_ lines: [(lineNumber: Int?, text: String)], file: URL, context: inout LocalUsageParseContext?) throws -> [LocalUsageEvent] { try parseClosure(file) }
+}
+
+private final class SpySessionReadAdapter: LocalUsageAdapter {
+    let id = "spy"
+    let displayName = "Spy"
+    let defaultRoot: URL
+    let file: URL
+    var readSessionChangesCallCount = 0
+
+    init(root: URL, file: URL) {
+        self.defaultRoot = root
+        self.file = file
+    }
+
+    func discoverFiles() throws -> [URL] {
+        [file]
+    }
+
+    func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        readSessionChangesCallCount += 1
+        let event = LocalUsageEvent(
+            key: "spy:native:event-1",
+            sourceTool: "spy",
+            sourceFile: file.path,
+            sourceEventId: "event-1",
+            sourceSessionId: "session-1",
+            sourceCwd: nil,
+            timestamp: Date(),
+            providerId: "spy",
+            model: "spy-model",
+            inputTokens: 1,
+            outputTokens: 2,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            reasoningTokens: 0,
+            totalTokens: 3,
+            costUsd: 0.01
+        )
+        return LocalUsageSessionReadResult(
+            events: [event],
+            checkpoint: LocalScanFileCheckpointUpdate(
+                sourceTool: id,
+                path: file.path,
+                fileSize: 8,
+                modifiedAt: nil,
+                fileId: nil,
+                readOffset: 8,
+                parseContext: nil,
+                importedEventCount: 1,
+                status: "ok",
+                lastError: nil
+            ),
+            observedSize: 8,
+            shouldReenqueue: false
+        )
+    }
+
+    func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
+        throw LocalUsageParseError.unsupportedSourceSchema("parseFile should not be used")
+    }
+
+    func parseLines(
+        _ lines: [(lineNumber: Int?, text: String)],
+        file: URL,
+        context: inout LocalUsageParseContext?
+    ) throws -> [LocalUsageEvent] {
+        throw LocalUsageParseError.unsupportedSourceSchema("parseLines should not be used")
+    }
 }

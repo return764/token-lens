@@ -90,11 +90,11 @@ public final class FileSystemEventWatcher {
     ) {
         guard let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] else { return }
 
-        let urls = candidateJSONLFiles(for: paths)
+        let urls = paths.map { URL(fileURLWithPath: $0) }
 
         if !urls.isEmpty {
             let names = urls.map { $0.lastPathComponent }.joined(separator: ", ")
-            print("[TokenLens] 📁 FSEvent: \(urls.count) JSONL candidate(s) changed → \(names)")
+            print("[TokenLens] 📁 FSEvent: \(urls.count) path(s) changed → \(names)")
             onEvents(urls)
         }
     }
@@ -103,32 +103,7 @@ public final class FileSystemEventWatcher {
     /// FSEvents can report a parent directory (especially when Codex creates date
     /// subdirectories or coalesces bursts), so directory paths are expanded recursively.
     func candidateJSONLFiles(for paths: [String]) -> [URL] {
-        var seen = Set<String>()
-        var urls: [URL] = []
-
-        func append(_ url: URL) {
-            let canonical = url.resolvingSymlinksInPath()
-            guard seen.insert(canonical.path).inserted else { return }
-            urls.append(canonical)
-        }
-
-        for path in paths {
-            let url = URL(fileURLWithPath: path)
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-                continue
-            }
-
-            if isDirectory.boolValue {
-                for file in (try? LocalRecordJSON.discoverJSONLFiles(root: url)) ?? [] {
-                    append(file)
-                }
-            } else if url.pathExtension == "jsonl" {
-                append(url)
-            }
-        }
-
-        return urls.sorted { $0.path < $1.path }
+        (try? LocalRecordJSON.candidateJSONLFiles(for: paths.map { URL(fileURLWithPath: $0) })) ?? []
     }
 
     deinit {

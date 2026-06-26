@@ -3,7 +3,6 @@ import Foundation
 public final class LocalUsageScanner {
     private let repository: LocalScanRepository
     private let adapters: [any LocalUsageAdapter]
-    private let incrementalReader = LocalJSONLIncrementalReader()
 
     public init(repository: LocalScanRepository, adapters: [any LocalUsageAdapter] = LocalUsageScanner.defaultAdapters()) {
         self.repository = repository
@@ -15,6 +14,7 @@ public final class LocalUsageScanner {
             CodexLocalUsageAdapter(),
             ClaudeCodeLocalUsageAdapter(),
             PiLocalUsageAdapter(),
+            OpenCodeLocalUsageAdapter(),
         ]
     }
 
@@ -62,22 +62,9 @@ public final class LocalUsageScanner {
 
                 do {
                     let existingCheckpoint = try repository.checkpoint(for: adapter.id, path: file.path)
-                    var parseContext = try adapter.bootstrapContext(file: file, checkpoint: existingCheckpoint)
-                    let batch = try incrementalReader.readNewLines(url: file, from: 0)
-                    let events = try adapter.parseLines(batch.lines, file: file, context: &parseContext)
+                    let readResult = try adapter.readSessionChanges(file: file, checkpoint: existingCheckpoint)
 
-                    let result = try repository.importIncrementalUsageEvents(events, checkpoint: LocalScanFileCheckpointUpdate(
-                        sourceTool: adapter.id,
-                        path: file.path,
-                        fileSize: Int(batch.fileSize),
-                        modifiedAt: batch.modifiedAt,
-                        fileId: existingCheckpoint?.fileId,
-                        readOffset: Int(batch.nextOffset),
-                        parseContext: parseContext,
-                        importedEventCount: events.count,
-                        status: "ok",
-                        lastError: nil
-                    ))
+                    let result = try repository.importIncrementalUsageEvents(readResult.events, checkpoint: readResult.checkpoint)
                     eventsImported += result.inserted
                 } catch {
                     parseErrorCount += 1

@@ -5,7 +5,6 @@ import Foundation
 public actor LocalSourceImportQueue {
     private let repository: LocalScanRepository
     private let adapters: [any LocalUsageAdapter]
-    private let reader = LocalJSONLIncrementalReader()
     private let debounceInterval: TimeInterval
 
     private var pending: Set<String> = []   // keyed by "tool::path"
@@ -89,41 +88,22 @@ public actor LocalSourceImportQueue {
 
         do {
             let checkpoint = try repository.checkpoint(for: sourceTool, path: path.path)
-            let readOffset = Int64(checkpoint?.readOffset ?? 0)
-            let batch = try reader.readNewLines(url: path, from: readOffset)
+            let readResult = try adapter.readSessionChanges(file: path, checkpoint: checkpoint)
 
-            guard !batch.lines.isEmpty else {
-                print("[TokenLens] 📄 [\(sourceTool)] \(path.lastPathComponent): no new lines (offset=\(readOffset), size=\(batch.fileSize))")
-                _ = try repository.importIncrementalUsageEvents([], checkpoint: LocalScanFileCheckpointUpdate(
-                    sourceTool: sourceTool, path: path.path,
-                    fileSize: Int(batch.fileSize), modifiedAt: batch.modifiedAt,
-                    fileId: checkpoint?.fileId, readOffset: Int(batch.nextOffset),
-                    parseContext: checkpoint?.parseContext,
-                    importedEventCount: 0, status: "ok", lastError: nil
-                ))
+            guard !readResult.events.isEmpty else {
+                print("[TokenLens] 📄 [\(sourceTool)] \(path.lastPathComponent): no complete session changes (offset=\(readResult.checkpoint.readOffset), size=\(readResult.observedSize))")
+                _ = try repository.importIncrementalUsageEvents([], checkpoint: readResult.checkpoint)
                 return
             }
 
-            print("[TokenLens] 📖 [\(sourceTool)] \(path.lastPathComponent): reading \(batch.lines.count) new line(s) (offset \(readOffset)→\(batch.nextOffset), size=\(batch.fileSize))")
+            print("[TokenLens] 📖 [\(sourceTool)] \(path.lastPathComponent): read \(readResult.events.count) usage event(s) (offset=\(readResult.checkpoint.readOffset), size=\(readResult.observedSize))")
 
-            var parseContext = try adapter.bootstrapContext(file: path, checkpoint: checkpoint)
-            let events = try adapter.parseLines(batch.lines, file: path, context: &parseContext)
-            let checkpointFileSize = Int(batch.fileSize)
-            let checkpointModifiedAt = batch.modifiedAt
-            let checkpointReadOffset = Int(batch.nextOffset)
-
-            let result = try repository.importIncrementalUsageEvents(events, checkpoint: LocalScanFileCheckpointUpdate(
-                sourceTool: sourceTool, path: path.path,
-                fileSize: checkpointFileSize, modifiedAt: checkpointModifiedAt,
-                fileId: checkpoint?.fileId, readOffset: checkpointReadOffset,
-                parseContext: parseContext,
-                importedEventCount: events.count, status: "ok", lastError: nil
-            ))
+            let result = try repository.importIncrementalUsageEvents(readResult.events, checkpoint: readResult.checkpoint)
 
             if result.inserted > 0 {
                 print("[TokenLens] ✅ [\(sourceTool)] Imported \(result.inserted) usage event(s) from \(path.lastPathComponent) (skipped \(result.skipped))")
             } else {
-                print("[TokenLens] ⏭️  [\(sourceTool)] \(path.lastPathComponent): \(events.count) event(s) parsed, all \(result.skipped) skipped (already imported)")
+                print("[TokenLens] ⏭️  [\(sourceTool)] \(path.lastPathComponent): \(readResult.events.count) event(s) parsed, all \(result.skipped) skipped (already imported)")
             }
 
             try updateSourceStats(sourceTool: sourceTool, filesScanned: 1, eventsImported: result.inserted)
@@ -132,9 +112,8 @@ public actor LocalSourceImportQueue {
             // Keep draining: if the file has grown again since we started, re-enqueue.
             // This handles the case where the writer appends data faster than FSEvents
             // can deliver events (or events are coalesced / dropped).
-            let currentSize = (try? FileManager.default.attributesOfItem(atPath: path.path)[.size] as? NSNumber)?.int64Value ?? 0
-            if currentSize > Int64(checkpointReadOffset) {
-                print("[TokenLens] 🔁 [\(sourceTool)] \(path.lastPathComponent): file grew from offset \(checkpointReadOffset) to \(currentSize) during import — re-enqueuing")
+            if readResult.shouldReenqueue {
+                print("[TokenLens] 🔁 [\(sourceTool)] \(path.lastPathComponent): session record may have more changes — re-enqueuing")
                 enqueue(sourceTool: sourceTool, paths: [path])
             }
         } catch {

@@ -28,6 +28,18 @@ final class FileSystemEventWatcherTests: XCTestCase {
         XCTAssertEqual(candidates, [jsonl.resolvingSymlinksInPath()])
     }
 
+    func test_defaultAdapterCandidates_expandJSONLThroughUnifiedSourceInterface() throws {
+        let root = try makeTempDirectory()
+        let nested = root.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let jsonl = nested.appendingPathComponent("session.jsonl")
+        try "{}\n".write(to: jsonl, atomically: true, encoding: .utf8)
+
+        let candidates = try PiLocalUsageAdapter(root: root).candidates(fromChangedPaths: [root, jsonl])
+
+        XCTAssertEqual(candidates, [jsonl.resolvingSymlinksInPath()])
+    }
+
     private func makeTempDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TokenLensTests")

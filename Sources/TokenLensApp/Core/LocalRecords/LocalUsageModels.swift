@@ -71,6 +71,8 @@ public protocol LocalUsageAdapter {
     var defaultRoot: URL { get }
 
     func discoverFiles() throws -> [URL]
+    func candidates(fromChangedPaths paths: [URL]) throws -> [URL]
+    func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult
     func parseFile(_ url: URL) throws -> [LocalUsageEvent]
     func bootstrapContext(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext?
     /// Incremental parsing: parse only the given lines (already read from file), updating source-specific context.
@@ -78,8 +80,58 @@ public protocol LocalUsageAdapter {
 }
 
 public extension LocalUsageAdapter {
+    func candidates(fromChangedPaths paths: [URL]) throws -> [URL] {
+        try LocalRecordJSON.candidateJSONLFiles(for: paths)
+    }
+
+    func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        let reader = LocalJSONLIncrementalReader()
+        let readOffset = Int64(checkpoint?.readOffset ?? 0)
+        let batch = try reader.readNewLines(url: file, from: readOffset)
+        var parseContext = try bootstrapContext(file: file, checkpoint: checkpoint)
+        let events = try parseLines(batch.lines, file: file, context: &parseContext)
+        let checkpointUpdate = LocalScanFileCheckpointUpdate(
+            sourceTool: id,
+            path: file.path,
+            fileSize: Int(batch.fileSize),
+            modifiedAt: batch.modifiedAt,
+            fileId: checkpoint?.fileId,
+            readOffset: Int(batch.nextOffset),
+            parseContext: parseContext,
+            importedEventCount: events.count,
+            status: "ok",
+            lastError: nil
+        )
+
+        return LocalUsageSessionReadResult(
+            events: events,
+            checkpoint: checkpointUpdate,
+            observedSize: Int(batch.fileSize),
+            shouldReenqueue: batch.fileSize > batch.nextOffset
+        )
+    }
+
     func bootstrapContext(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext? {
         checkpoint?.parseContext
+    }
+}
+
+public struct LocalUsageSessionReadResult: Equatable {
+    public let events: [LocalUsageEvent]
+    public let checkpoint: LocalScanFileCheckpointUpdate
+    public let observedSize: Int
+    public let shouldReenqueue: Bool
+
+    public init(
+        events: [LocalUsageEvent],
+        checkpoint: LocalScanFileCheckpointUpdate,
+        observedSize: Int,
+        shouldReenqueue: Bool
+    ) {
+        self.events = events
+        self.checkpoint = checkpoint
+        self.observedSize = observedSize
+        self.shouldReenqueue = shouldReenqueue
     }
 }
 
@@ -135,11 +187,14 @@ public struct LocalScanFileCheckpointUpdate: Equatable {
 
 public enum LocalUsageParseError: Error, LocalizedError {
     case invalidJSON(line: Int)
+    case unsupportedSourceSchema(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidJSON(let line):
             return "Invalid JSONL at line \(line)"
+        case .unsupportedSourceSchema(let message):
+            return message
         }
     }
 }
@@ -196,5 +251,33 @@ enum LocalRecordJSON {
             files.append(url)
         }
         return files.sorted { $0.path < $1.path }
+    }
+
+    static func candidateJSONLFiles(for paths: [URL]) throws -> [URL] {
+        var seen = Set<String>()
+        var urls: [URL] = []
+
+        func append(_ url: URL) {
+            let canonical = url.resolvingSymlinksInPath()
+            guard seen.insert(canonical.path).inserted else { return }
+            urls.append(canonical)
+        }
+
+        for url in paths {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                continue
+            }
+
+            if isDirectory.boolValue {
+                for file in try discoverJSONLFiles(root: url) {
+                    append(file)
+                }
+            } else if url.pathExtension == "jsonl" {
+                append(url)
+            }
+        }
+
+        return urls.sorted { $0.path < $1.path }
     }
 }

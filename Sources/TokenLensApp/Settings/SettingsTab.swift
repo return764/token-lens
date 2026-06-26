@@ -397,6 +397,7 @@ struct SettingsTab: View {
         case "claude_code": return "Claude Code"
         case "codex": return "Codex"
         case "pi": return "pi"
+        case "opencode": return "OpenCode"
         default: return sourceTool
         }
     }
@@ -406,6 +407,7 @@ struct SettingsTab: View {
         case "claude_code": return "Claude Code"
         case "codex": return "Codex"
         case "pi": return "pi"
+        case "opencode": return "OpenCode"
         default: return sourceTool
         }
     }

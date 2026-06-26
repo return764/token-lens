@@ -1,7 +1,7 @@
 import Foundation
 
-/// Background service that watches Codex / Claude Code / pi session directories
-/// and incrementally imports new JSONL usage data.
+/// Background service that watches built-in local session sources
+/// and incrementally imports new usage data.
 ///
 /// This class is NOT @MainActor — it manages its own dispatch queues.
 /// Use `onRefreshNeeded` callback on the main actor for UI updates.
@@ -128,7 +128,12 @@ public final class LocalSourcesBackgroundService {
         let watcher = FileSystemEventWatcher(root: root) { [weak self] paths in
             guard let self else { return }
             Task {
-                await self.importQueue.enqueue(sourceTool: adapter.id, paths: paths)
+                do {
+                    let candidates = try adapter.candidates(fromChangedPaths: paths)
+                    await self.importQueue.enqueue(sourceTool: adapter.id, paths: candidates)
+                } catch {
+                    print("[TokenLens] ⚠️ [\(adapter.id)] Candidate normalization failed: \(error)")
+                }
             }
         }
 

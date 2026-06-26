@@ -7,14 +7,14 @@
 | 模块 | 内容 | 状态 |
 |---|---|---|
 | App/UI | MenuBarExtra、Settings window、最近 usage、Local Sources、菜单栏 cost/tokens/live tokens | ✅ |
-| 本地扫描 | Codex / Claude Code / pi adapters | ✅ |
+| 本地扫描 | Codex / Claude Code / pi / OpenCode adapters | ✅ |
 | 后台监听 | 启动 catch-up、FSEvents watcher、周期 reconcile、Rescan Now | ✅ |
 | 增量导入 | byte offset、半行保护、truncate 重读、parse context 持久化 | ✅ |
 | 幂等去重 | `local_usage_imports.key`，文件/session/fork 无关去重 | ✅ |
 | 数据模型 | `token_usages` 瘦身账本；删除 `model_calls` / `daily_usage` 当前依赖 | ✅ |
 | 定价 | `models` 表 + models.dev 首次初始化 + CostCalculator | ✅ |
 | 隐私 | 不保存 prompt/response/tool output/API key；key/context 脱敏 | ✅ |
-| 测试 | 80 tests, 0 failures | ✅ |
+| 测试 | 102 tests, 0 failures | ✅ |
 | 网络捕获 | 不属于当前实现，已抽离到未来计划 | ⏭️ |
 
 网络相关未实现能力已单独成文：[`docs/plans/future/network-capture-plan.md`](plans/future/network-capture-plan.md)。本文件只描述当前已实现 MVP 与近期计划。
@@ -65,6 +65,7 @@
 | Codex adapter | ✅ | `CodexLocalUsageAdapter.swift` |
 | Claude Code adapter | ✅ | `ClaudeCodeLocalUsageAdapter.swift` |
 | pi adapter | ✅ | `PiLocalUsageAdapter.swift` |
+| OpenCode adapter | ✅ | `OpenCodeLocalUsageAdapter.swift` |
 | key 生成 | ✅ | `LocalUsageKeyBuilder.swift` |
 | 增量 JSONL reader | ✅ | `LocalJSONLIncrementalReader.swift` |
 | 启动 catch-up scanner | ✅ | `LocalUsageScanner.swift` |
@@ -97,7 +98,7 @@
 ## 当前测试状态
 
 ```text
-✅ 80 tests, 0 failures
+✅ 102 tests, 0 failures
 ```
 
 重点覆盖：
@@ -106,10 +107,11 @@
 - token usage 插入/查询。
 - models.dev seeding 与 CostCalculator。
 - Codex / Claude Code / pi 全量与增量解析。
+- OpenCode SQLite session aggregate delta 解析。
 - JSONL offset reader、半行、truncate。
 - checkpoint 与 parse context 持久化。
 - key-based 去重与 fork/session/file-independent dedupe。
-- FSEvents path expansion/dedupe。
+- FSEvents path expansion/dedupe 与 source-aware candidate routing。
 - 隐私约束。
 - AppState 菜单栏显示与 Local Sources 刷新。
 
