@@ -2,7 +2,7 @@ import XCTest
 @testable import TokenLensApp
 
 final class PiLocalUsageAdapterTests: XCTestCase {
-    func test_parseFile_extractsAssistantUsageFromPiSession() throws {
+    func test_readUsageChanges_extractsAssistantUsageFromPiSession() throws {
         let root = try makeTempDirectory()
         let file = root.appendingPathComponent("session.jsonl")
         try writeJSONL([
@@ -14,7 +14,7 @@ final class PiLocalUsageAdapterTests: XCTestCase {
         ], to: file)
 
         let adapter = PiLocalUsageAdapter(root: root)
-        let events = try adapter.parseFile(file)
+        let events = try adapter.readUsageChanges(record: .appendOnlyJSONL(file), checkpoint: nil).events
 
         XCTAssertEqual(events.count, 1)
         let event = try XCTUnwrap(events.first)
@@ -33,7 +33,7 @@ final class PiLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(event.costUsd), 0.0123, accuracy: 0.00001)
     }
 
-    func test_parseLines_extractsFromIncrementalLines() throws {
+    func test_parseJSONLLines_extractsFromIncrementalLines() throws {
         let root = try makeTempDirectory()
         let file = root.appendingPathComponent("session.jsonl")
 
@@ -44,7 +44,7 @@ final class PiLocalUsageAdapterTests: XCTestCase {
             (3, #"{"type":"message","id":"assistant-1","timestamp":"2026-06-09T10:11:12Z","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet-4-20250514","usage":{"input":120,"output":34,"totalTokens":154}}}"#),
         ]
         var context: LocalUsageParseContext?
-        let events = try adapter.parseLines(lines, file: file, context: &context)
+        let events = try adapter.parseJSONLLines(lines, record: .appendOnlyJSONL(file), context: &context)
 
         XCTAssertEqual(events.count, 1)
         let event = try XCTUnwrap(events.first)
@@ -63,6 +63,6 @@ final class PiLocalUsageAdapterTests: XCTestCase {
     }
 
     private func writeJSONL(_ lines: [String], to url: URL) throws {
-        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 }

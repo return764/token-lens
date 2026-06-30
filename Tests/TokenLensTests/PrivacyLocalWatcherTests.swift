@@ -37,14 +37,14 @@ final class PrivacyLocalWatcherTests: XCTestCase {
 
         let adapter = PiLocalUsageAdapter(root: root)
         var context: LocalUsageParseContext?
-        let events = try adapter.parseLines(
+        let events = try adapter.parseJSONLLines(
             [
                 (1, #"{"type":"session","id":"sess-1","cwd":"/work"}"#),
                 (2, #"{"type":"message","id":"user-1","message":{"role":"user","content":"hello"}}"#),
                 (3, #"{"type":"message","id":"assistant-no-usage","message":{"role":"assistant"}}"#),
                 (4, #"{"type":"message","id":"assistant-2","message":{"role":"assistant","usage":{"input":10,"output":5,"totalTokens":15}}}"#),
             ],
-            file: file,
+            record: .appendOnlyJSONL(file),
             context: &context
         )
 
@@ -65,7 +65,7 @@ final class PrivacyLocalWatcherTests: XCTestCase {
             (4, #"{"type":"event_msg","timestamp":"2026-01-01T00:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":30,"total_tokens":80}}}}"#),
         ]
         var context: LocalUsageParseContext?
-        let events = try adapter.parseLines(lines, file: file, context: &context)
+        let events = try adapter.parseJSONLLines(lines, record: .appendOnlyJSONL(file), context: &context)
 
         XCTAssertEqual(events.count, 1, "Only token_count events should produce usage")
         XCTAssertEqual(events[0].totalTokens, 80)

@@ -187,15 +187,17 @@ CREATE TABLE IF NOT EXISTS models (
 
 ## 6. Adapter 规范
 
-`LocalUsageAdapter` 负责发现文件、解析全文件、解析增量行、恢复/更新解析上下文。
+`LocalUsageAdapter` 负责发现本地 usage 逻辑记录、把文件系统变化归一成逻辑记录、读取 usage 增量并返回 checkpoint 更新。Adapter 边界不再暴露 JSONL 专属方法。
 
 核心要求：
 
 - 只对 usage-bearing 事件生成 `LocalUsageEvent`。
-- 无 usage 的消息可用于临时解析上下文，但不得入库。
+- 无 usage 的消息或数据库行可用于更新解析上下文/aggregate watermark，但不得入库。
 - `LocalUsageEvent.key` 必须稳定，优先用原生稳定 id；没有稳定 id 时使用 usage 指纹 hash。
 - hash 输入只能包含 timestamp/provider/model/token/cost 等非敏感字段。
-- `parse_context_json` 只允许保存 session id、cwd、provider、model 等元数据。
+- `parse_context_json` 只允许保存 session id、cwd、provider、model、usage aggregate watermark 等非敏感元数据。
+- append-only JSONL source 使用 `AppendOnlyJSONLUsageReader` 处理 offset、完整行、截断/轮转和 checkpoint。
+- SQLite source 直接在 adapter 内读取数据库，并将 WAL/SHM 变化归一到主数据库 checkpoint。
 
 当前内置 adapter：
 
@@ -204,6 +206,7 @@ CREATE TABLE IF NOT EXISTS models (
 | Codex | `CodexLocalUsageAdapter` | `~/.codex/sessions/**/*.jsonl` |
 | Claude Code | `ClaudeCodeLocalUsageAdapter` | `~/.claude/projects/**/*.jsonl` |
 | pi | `PiLocalUsageAdapter` | `~/.pi/agent/sessions/**/*.jsonl` |
+| OpenCode | `OpenCodeLocalUsageAdapter` | `~/.local/share/opencode/opencode.db` |
 
 ## 7. 隐私与安全要求
 

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct PiLocalUsageAdapter: LocalUsageAdapter {
+public struct PiLocalUsageAdapter: LocalUsageAdapter, AppendOnlyJSONLUsageDecoding {
     public let defaultRoot: URL
 
     public var id: String { "pi" }
@@ -10,22 +10,21 @@ public struct PiLocalUsageAdapter: LocalUsageAdapter {
         self.defaultRoot = root
     }
 
-    public func discoverFiles() throws -> [URL] {
-        try LocalRecordJSON.discoverJSONLFiles(root: defaultRoot)
+    public func discoverRecords() throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.discoverJSONLRecords(root: defaultRoot)
     }
 
-    public func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.components(separatedBy: .newlines).enumerated().map { offset, line in
-            (lineNumber: Optional(offset + 1), text: line)
-        }
-        var context: LocalUsageParseContext?
-        return try parseLines(lines, file: url, context: &context)
+    public func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.candidateJSONLRecords(for: paths)
     }
 
-    public func parseLines(
+    public func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        try AppendOnlyJSONLUsageReader().readChanges(record: record, checkpoint: checkpoint, decoder: self)
+    }
+
+    public func parseJSONLLines(
         _ lines: [(lineNumber: Int?, text: String)],
-        file: URL,
+        record: LocalUsageRecord,
         context: inout LocalUsageParseContext?
     ) throws -> [LocalUsageEvent] {
         var payload = decodeContext(context) ?? PiParseContextPayload()
@@ -44,7 +43,7 @@ public struct PiLocalUsageAdapter: LocalUsageAdapter {
             if let event = usageEvent(
                 from: object,
                 lineNumber: lineNumber ?? 0,
-                sourceFile: file.path,
+                sourceFile: record.readURL.path,
                 sessionId: payload.sessionId,
                 cwd: payload.cwd
             ) {

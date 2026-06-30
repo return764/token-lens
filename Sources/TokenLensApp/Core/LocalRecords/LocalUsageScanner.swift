@@ -47,23 +47,22 @@ public final class LocalUsageScanner {
                 lastError: nil
             ))
 
-            let files = try adapter.discoverFiles()
+            let records = try adapter.discoverRecords()
             var filesScanned = 0
             var eventsImported = 0
             var parseErrorCount = 0
             var lastError: String?
 
-            for file in files {
-                guard (try? repository.shouldScanFile(sourceTool: adapter.id, url: file)) ?? true else { continue }
+            for record in records {
+                guard record.kind == .sqliteDatabase || ((try? repository.shouldScanFile(sourceTool: adapter.id, url: record.checkpointURL)) ?? true) else { continue }
                 filesScanned += 1
-                let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
+                let attributes = try? FileManager.default.attributesOfItem(atPath: record.readURL.path)
                 let fileSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
                 let modifiedAt = attributes?[.modificationDate] as? Date
 
                 do {
-                    let checkpointURL = adapter.checkpointURL(for: file)
-                    let existingCheckpoint = try repository.checkpoint(for: adapter.id, path: checkpointURL.path)
-                    let readResult = try adapter.readSessionChanges(file: file, checkpoint: existingCheckpoint)
+                    let existingCheckpoint = try repository.checkpoint(for: adapter.id, path: record.checkpointURL.path)
+                    let readResult = try adapter.readUsageChanges(record: record, checkpoint: existingCheckpoint)
 
                     let result = try repository.importIncrementalUsageEvents(readResult.events, checkpoint: readResult.checkpoint)
                     eventsImported += result.inserted
@@ -72,7 +71,7 @@ public final class LocalUsageScanner {
                     lastError = sanitize(error)
                     try? repository.upsertFileStatus(LocalScanFileStatus(
                         sourceTool: adapter.id,
-                        path: file.path,
+                        path: record.checkpointURL.path,
                         fileSize: fileSize,
                         modifiedAt: modifiedAt,
                         lastScannedAt: Date(),
@@ -90,7 +89,7 @@ public final class LocalUsageScanner {
                 status: parseErrorCount > 0 ? "parse_error" : "ok",
                 lastScanStartedAt: startedAt,
                 lastScanFinishedAt: Date(),
-                filesSeen: files.count,
+                filesSeen: records.count,
                 filesScanned: filesScanned,
                 eventsImported: eventsImported,
                 parseErrorCount: parseErrorCount,

@@ -2,7 +2,7 @@ import XCTest
 @testable import TokenLensApp
 
 final class CodexLocalUsageAdapterTests: XCTestCase {
-    func test_parseFile_importsLastTokenUsageWithoutCumulativeDoubleCount() throws {
+    func test_readUsageChanges_importsLastTokenUsageWithoutCumulativeDoubleCount() throws {
         let root = try makeTempDirectory()
         let file = root.appendingPathComponent("codex.jsonl")
         try writeJSONL([
@@ -11,7 +11,8 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
             #"{"type":"event_msg","timestamp":"2026-06-09T10:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":40,"cached_input_tokens":15,"reasoning_output_tokens":7,"total_tokens":162},"total_token_usage":{"input_tokens":9999,"output_tokens":9999,"total_tokens":19998}}}}"#
         ], to: file)
 
-        let events = try CodexLocalUsageAdapter(root: root).parseFile(file)
+        let adapter = CodexLocalUsageAdapter(root: root)
+        let events = try adapter.readUsageChanges(record: .appendOnlyJSONL(file), checkpoint: nil).events
 
         XCTAssertEqual(events.count, 1)
         let event = try XCTUnwrap(events.first)
@@ -29,7 +30,7 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(event.totalTokens, 162)
     }
 
-    func test_parseLines_extractsFromIncrementalLines() throws {
+    func test_parseJSONLLines_extractsFromIncrementalLines() throws {
         let root = try makeTempDirectory()
         let file = root.appendingPathComponent("codex.jsonl")
 
@@ -40,7 +41,7 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
             (3, #"{"type":"event_msg","timestamp":"2026-06-09T10:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":20,"cached_input_tokens":0,"reasoning_output_tokens":0,"total_tokens":70}}}}"#),
         ]
         var context: LocalUsageParseContext?
-        let events = try adapter.parseLines(lines, file: file, context: &context)
+        let events = try adapter.parseJSONLLines(lines, record: .appendOnlyJSONL(file), context: &context)
 
         XCTAssertEqual(events.count, 1)
         let event = try XCTUnwrap(events.first)
@@ -50,7 +51,7 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(event.sourceCwd, "/work")
     }
 
-    func test_parseLines_usesPersistedContextWhenBatchHasOnlyTokenCount() throws {
+    func test_parseJSONLLines_usesPersistedContextWhenBatchHasOnlyTokenCount() throws {
         let root = try makeTempDirectory()
         let file = root.appendingPathComponent("codex.jsonl")
         let adapter = CodexLocalUsageAdapter(root: root)
@@ -62,7 +63,7 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
             (42, #"{"type":"event_msg","timestamp":"2026-06-09T10:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":20,"cached_input_tokens":0,"reasoning_output_tokens":0,"total_tokens":70}}}}"#),
         ]
 
-        let events = try adapter.parseLines(lines, file: file, context: &context)
+        let events = try adapter.parseJSONLLines(lines, record: .appendOnlyJSONL(file), context: &context)
 
         let event = try XCTUnwrap(events.first)
         XCTAssertEqual(event.model, "gpt-5-codex")
@@ -71,7 +72,7 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(event.sourceCwd, "/work")
     }
 
-    func test_bootstrapContext_scansPriorContextBeforeCheckpoint() throws {
+    func test_initialContext_scansPriorContextBeforeCheckpoint() throws {
         let root = try makeTempDirectory()
         let file = root.appendingPathComponent("codex.jsonl")
         let firstTwoLines = [
@@ -87,7 +88,7 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
             fileId: nil, readOffset: offsetAfterContext, lastScannedAt: nil
         )
 
-        let context = try XCTUnwrap(CodexLocalUsageAdapter(root: root).bootstrapContext(file: file, checkpoint: checkpoint))
+        let context = try XCTUnwrap(CodexLocalUsageAdapter(root: root).initialContext(record: .appendOnlyJSONL(file), checkpoint: checkpoint))
 
         XCTAssertTrue(context.json.contains("codex-session"))
         XCTAssertTrue(context.json.contains("gpt-5-codex"))
@@ -102,6 +103,6 @@ final class CodexLocalUsageAdapterTests: XCTestCase {
     }
 
     private func writeJSONL(_ lines: [String], to url: URL) throws {
-        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 }

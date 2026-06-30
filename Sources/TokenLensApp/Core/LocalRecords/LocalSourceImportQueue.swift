@@ -1,13 +1,13 @@
 import Foundation
 
 /// Serial import queue that debounces and deduplicates file-system events.
-/// Only one import runs per (sourceTool, path) at a time.
+/// Only one import runs per (sourceTool, checkpoint path) at a time.
 public actor LocalSourceImportQueue {
     private let repository: LocalScanRepository
     private let adapters: [any LocalUsageAdapter]
     private let debounceInterval: TimeInterval
 
-    private var pending: Set<String> = []   // keyed by "tool::path"
+    private var pending: [String: LocalUsageRecord] = [:]   // keyed by "tool::checkpointPath"
     private var inProgress: Set<String> = []
     private var pendingFlush = false
 
@@ -25,18 +25,18 @@ public actor LocalSourceImportQueue {
         self.debounceInterval = debounceInterval
     }
 
-    /// Enqueue a set of file paths affected by filesystem events.
-    public func enqueue(sourceTool: String, paths: [URL]) {
+    /// Enqueue logical records affected by filesystem events.
+    public func enqueue(sourceTool: String, records: [LocalUsageRecord]) {
         var added = 0
-        for path in paths {
-            let key = "\(sourceTool)::\(path.path)"
-            let wasPending = pending.contains(key)
-            pending.insert(key)
-            if !wasPending { added += 1 }
+        for record in records {
+            let key = Self.key(sourceTool: sourceTool, record: record)
+            let wasPending = pending[key] != nil
+            pending[key] = record
+            if !wasPending && !inProgress.contains(key) { added += 1 }
         }
         if added > 0 {
-            let names = paths.map { $0.lastPathComponent }.joined(separator: ", ")
-            print("[TokenLens] 📥 Enqueued \(added) file(s) from [\(sourceTool)]: \(names)")
+            let names = records.map { $0.readURL.lastPathComponent }.joined(separator: ", ")
+            print("[TokenLens] 📥 Enqueued \(added) record(s) from [\(sourceTool)]: \(names)")
         }
         if !pending.isEmpty {
             scheduleFlush()
@@ -64,47 +64,45 @@ public actor LocalSourceImportQueue {
         guard pendingFlush else { return }
         pendingFlush = false
 
-        let batch = pending.filter { !inProgress.contains($0) }
-        pending.subtract(batch)
+        let batch = pending.filter { !inProgress.contains($0.key) }
+        for key in batch.keys {
+            pending.removeValue(forKey: key)
+        }
 
         guard !batch.isEmpty else { return }
 
-        for key in batch {
-            let parts = key.components(separatedBy: "::")
-            guard parts.count >= 2 else { continue }
-            let sourceTool = parts[0]
-            let path = URL(fileURLWithPath: parts.dropFirst().joined(separator: "::"))
+        for (key, record) in batch {
+            let sourceTool = Self.sourceTool(fromKey: key)
             inProgress.insert(key)
 
             Task {
                 defer { Task { self.finishImport(key: key) } }
-                await importFile(sourceTool: sourceTool, path: path)
+                await importRecord(sourceTool: sourceTool, record: record)
             }
         }
     }
 
-    private func importFile(sourceTool: String, path: URL) async {
+    private func importRecord(sourceTool: String, record: LocalUsageRecord) async {
         guard let adapter = adapters.first(where: { $0.id == sourceTool }) else { return }
 
         do {
-            let checkpointURL = adapter.checkpointURL(for: path)
-            let checkpoint = try repository.checkpoint(for: sourceTool, path: checkpointURL.path)
-            let readResult = try adapter.readSessionChanges(file: path, checkpoint: checkpoint)
+            let checkpoint = try repository.checkpoint(for: sourceTool, path: record.checkpointURL.path)
+            let readResult = try adapter.readUsageChanges(record: record, checkpoint: checkpoint)
 
             guard !readResult.events.isEmpty else {
-                print("[TokenLens] 📄 [\(sourceTool)] \(path.lastPathComponent): no complete session changes (offset=\(readResult.checkpoint.readOffset), size=\(readResult.observedSize))")
+                print("[TokenLens] 📄 [\(sourceTool)] \(record.readURL.lastPathComponent): no complete session changes (offset=\(readResult.checkpoint.readOffset), size=\(readResult.observedSize))")
                 _ = try repository.importIncrementalUsageEvents([], checkpoint: readResult.checkpoint)
                 return
             }
 
-            print("[TokenLens] 📖 [\(sourceTool)] \(path.lastPathComponent): read \(readResult.events.count) usage event(s) (offset=\(readResult.checkpoint.readOffset), size=\(readResult.observedSize))")
+            print("[TokenLens] 📖 [\(sourceTool)] \(record.readURL.lastPathComponent): read \(readResult.events.count) usage event(s) (offset=\(readResult.checkpoint.readOffset), size=\(readResult.observedSize))")
 
             let result = try repository.importIncrementalUsageEvents(readResult.events, checkpoint: readResult.checkpoint)
 
             if result.inserted > 0 {
-                print("[TokenLens] ✅ [\(sourceTool)] Imported \(result.inserted) usage event(s) from \(path.lastPathComponent) (skipped \(result.skipped))")
+                print("[TokenLens] ✅ [\(sourceTool)] Imported \(result.inserted) usage event(s) from \(record.readURL.lastPathComponent) (skipped \(result.skipped))")
             } else {
-                print("[TokenLens] ⏭️  [\(sourceTool)] \(path.lastPathComponent): \(readResult.events.count) event(s) parsed, all \(result.skipped) skipped (already imported)")
+                print("[TokenLens] ⏭️  [\(sourceTool)] \(record.readURL.lastPathComponent): \(readResult.events.count) event(s) parsed, all \(result.skipped) skipped (already imported)")
             }
 
             try updateSourceStats(sourceTool: sourceTool, filesScanned: 1, eventsImported: result.inserted)
@@ -114,15 +112,14 @@ public actor LocalSourceImportQueue {
             // This handles the case where the writer appends data faster than FSEvents
             // can deliver events (or events are coalesced / dropped).
             if readResult.shouldReenqueue {
-                print("[TokenLens] 🔁 [\(sourceTool)] \(path.lastPathComponent): session record may have more changes — re-enqueuing")
-                enqueue(sourceTool: sourceTool, paths: [path])
+                print("[TokenLens] 🔁 [\(sourceTool)] \(record.readURL.lastPathComponent): session record may have more changes — re-enqueuing")
+                enqueue(sourceTool: sourceTool, records: [record])
             }
         } catch {
-            print("[TokenLens] ❌ [\(sourceTool)] Import error \(path.lastPathComponent): \(error)")
-            let checkpointURL = adapter.checkpointURL(for: path)
-            let ck = try? repository.checkpoint(for: sourceTool, path: checkpointURL.path)
+            print("[TokenLens] ❌ [\(sourceTool)] Import error \(record.readURL.lastPathComponent): \(error)")
+            let ck = try? repository.checkpoint(for: sourceTool, path: record.checkpointURL.path)
             _ = try? repository.importIncrementalUsageEvents([], checkpoint: LocalScanFileCheckpointUpdate(
-                sourceTool: sourceTool, path: checkpointURL.path,
+                sourceTool: sourceTool, path: record.checkpointURL.path,
                 fileSize: 0, modifiedAt: nil,
                 fileId: ck?.fileId, readOffset: ck?.readOffset ?? 0,
                 parseContext: ck?.parseContext,
@@ -133,9 +130,17 @@ public actor LocalSourceImportQueue {
 
     private func finishImport(key: String) {
         inProgress.remove(key)
-        if pending.contains(key) {
+        if pending[key] != nil {
             scheduleFlush()
         }
+    }
+
+    private static func key(sourceTool: String, record: LocalUsageRecord) -> String {
+        "\(sourceTool)::\(record.checkpointURL.path)"
+    }
+
+    private static func sourceTool(fromKey key: String) -> String {
+        key.components(separatedBy: "::").first ?? ""
     }
 
     private func updateSourceStats(sourceTool: String, filesScanned: Int, eventsImported: Int) throws {

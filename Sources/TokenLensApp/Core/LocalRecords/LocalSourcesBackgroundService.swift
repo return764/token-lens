@@ -130,7 +130,7 @@ public final class LocalSourcesBackgroundService {
             Task {
                 do {
                     let candidates = try adapter.candidates(fromChangedPaths: paths)
-                    await self.importQueue.enqueue(sourceTool: adapter.id, paths: candidates)
+                    await self.importQueue.enqueue(sourceTool: adapter.id, records: candidates)
                 } catch {
                     print("[TokenLens] ⚠️ [\(adapter.id)] Candidate normalization failed: \(error)")
                 }
@@ -179,13 +179,13 @@ public final class LocalSourcesBackgroundService {
         for adapter in adapters {
             guard FileManager.default.fileExists(atPath: adapter.defaultRoot.path) else { continue }
             do {
-                let files = try adapter.discoverFiles()
-                let changed = files.filter { file in
-                    (try? repository.shouldScanFile(sourceTool: adapter.id, url: file)) ?? true
+                let records = try adapter.discoverRecords()
+                let changed = records.filter { record in
+                    record.kind == .sqliteDatabase || ((try? repository.shouldScanFile(sourceTool: adapter.id, url: record.checkpointURL)) ?? true)
                 }
                 guard !changed.isEmpty else { continue }
-                print("[TokenLens] 🧹 [\(adapter.id)] Reconcile enqueuing \(changed.count) changed file(s)")
-                await importQueue.enqueue(sourceTool: adapter.id, paths: changed)
+                print("[TokenLens] 🧹 [\(adapter.id)] Reconcile enqueuing \(changed.count) changed record(s)")
+                await importQueue.enqueue(sourceTool: adapter.id, records: changed)
             } catch {
                 print("[TokenLens] ⚠️ [\(adapter.id)] Reconcile failed: \(error)")
             }

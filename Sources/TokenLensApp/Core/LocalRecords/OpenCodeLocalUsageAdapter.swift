@@ -19,63 +19,37 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
         self.defaultRoot = root
     }
 
-    public func discoverFiles() throws -> [URL] {
-        databaseSidecarFilenames
-            .map { defaultRoot.appendingPathComponent($0) }
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
-            .map { $0.resolvingSymlinksInPath() }
-            .sorted { $0.path < $1.path }
+    public func discoverRecords() throws -> [LocalUsageRecord] {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else { return [] }
+        return [databaseRecord()]
     }
 
-    public func candidates(fromChangedPaths paths: [URL]) throws -> [URL] {
+    public func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord] {
         guard FileManager.default.fileExists(atPath: databaseURL.path) else { return [] }
 
         var seen = Set<String>()
-        var candidates: [URL] = []
+        var candidates: [LocalUsageRecord] = []
 
-        func append(_ url: URL) {
-            let canonical = url.resolvingSymlinksInPath()
-            guard seen.insert(canonical.path).inserted else { return }
-            candidates.append(canonical)
+        func appendDatabaseRecord() {
+            let record = databaseRecord()
+            guard seen.insert(record.checkpointURL.path).inserted else { return }
+            candidates.append(record)
         }
 
         for path in paths {
             let filename = path.lastPathComponent
             if path.path == defaultRoot.path {
-                for file in try discoverFiles() {
-                    append(file)
-                }
+                appendDatabaseRecord()
             } else if databaseSidecarFilenames.contains(filename) {
-                if FileManager.default.fileExists(atPath: path.path) {
-                    append(path)
-                } else {
-                    append(databaseURL)
-                }
+                appendDatabaseRecord()
             }
         }
 
-        return candidates.sorted { $0.path < $1.path }
+        return candidates.sorted { $0.checkpointURL.path < $1.checkpointURL.path }
     }
 
-    public func checkpointURL(for file: URL) -> URL {
-        normalizedDatabaseURL(for: file)
-    }
-
-    public func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
-        let result = try readSessionChanges(file: url, checkpoint: nil)
-        return result.events
-    }
-
-    public func parseLines(
-        _ lines: [(lineNumber: Int?, text: String)],
-        file: URL,
-        context: inout LocalUsageParseContext?
-    ) throws -> [LocalUsageEvent] {
-        []
-    }
-
-    public func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
-        let database = normalizedDatabaseURL(for: file)
+    public func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        let database = databaseRecord().readURL
         let checkpoint = checkpoint?.path == database.path ? checkpoint : nil
         let attributes = try? FileManager.default.attributesOfItem(atPath: database.path)
         let fileSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
@@ -156,10 +130,13 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
         )
     }
 
-    private func normalizedDatabaseURL(for file: URL) -> URL {
-        databaseSidecarFilenames.contains(file.lastPathComponent)
-            ? databaseURL.resolvingSymlinksInPath()
-            : file.resolvingSymlinksInPath()
+    private func databaseRecord() -> LocalUsageRecord {
+        let canonical = databaseURL.resolvingSymlinksInPath()
+        return LocalUsageRecord(
+            readURL: canonical,
+            checkpointURL: canonical,
+            kind: .sqliteDatabase
+        )
     }
 
     private func fetchSessionRows(from file: URL) throws -> [OpenCodeSessionRow] {

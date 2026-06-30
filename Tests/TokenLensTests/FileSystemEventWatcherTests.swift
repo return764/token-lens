@@ -37,7 +37,7 @@ final class FileSystemEventWatcherTests: XCTestCase {
 
         let candidates = try PiLocalUsageAdapter(root: root).candidates(fromChangedPaths: [root, jsonl])
 
-        XCTAssertEqual(candidates, [jsonl.resolvingSymlinksInPath()])
+        XCTAssertEqual(candidates, [.appendOnlyJSONL(jsonl)])
     }
 
     private func makeTempDirectory() throws -> URL {

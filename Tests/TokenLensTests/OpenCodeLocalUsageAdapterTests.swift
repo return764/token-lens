@@ -3,7 +3,7 @@ import XCTest
 @testable import TokenLensApp
 
 final class OpenCodeLocalUsageAdapterTests: XCTestCase {
-    func test_readSessionChanges_importsInitialUsageAggregate() throws {
+    func test_readUsageChanges_importsInitialUsageAggregate() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         try makeOpenCodeDatabase(db)
@@ -22,7 +22,8 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
             timeUpdated: 1_766_000_001_000
         )
 
-        let result = try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: db, checkpoint: nil)
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+        let result = try adapter.readUsageChanges(record: try onlyRecord(adapter), checkpoint: nil)
 
         XCTAssertEqual(result.events.count, 1)
         let event = try XCTUnwrap(result.events.first)
@@ -42,13 +43,14 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
         XCTAssertNotNil(result.checkpoint.parseContext)
     }
 
-    func test_readSessionChanges_skipsUnchangedAggregate() throws {
+    func test_readUsageChanges_skipsUnchangedAggregate() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         try makeOpenCodeDatabase(db)
         try insertSession(db, id: "sess-1", input: 10, output: 5, cost: 0.01)
         let adapter = OpenCodeLocalUsageAdapter(root: root)
-        let first = try adapter.readSessionChanges(file: db, checkpoint: nil)
+        let record = try onlyRecord(adapter)
+        let first = try adapter.readUsageChanges(record: record, checkpoint: nil)
         let checkpoint = LocalScanFileCheckpoint(
             sourceTool: "opencode",
             path: db.path,
@@ -60,22 +62,23 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
             parseContext: first.checkpoint.parseContext
         )
 
-        let second = try adapter.readSessionChanges(file: db, checkpoint: checkpoint)
+        let second = try adapter.readUsageChanges(record: record, checkpoint: checkpoint)
 
         XCTAssertEqual(second.events, [])
     }
 
-    func test_readSessionChanges_importsOnlyPositiveDelta() throws {
+    func test_readUsageChanges_importsOnlyPositiveDelta() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         try makeOpenCodeDatabase(db)
         try insertSession(db, id: "sess-1", input: 10, output: 5, cacheRead: 1, cost: 0.01, timeUpdated: 1000)
         let adapter = OpenCodeLocalUsageAdapter(root: root)
-        let first = try adapter.readSessionChanges(file: db, checkpoint: nil)
+        let record = try onlyRecord(adapter)
+        let first = try adapter.readUsageChanges(record: record, checkpoint: nil)
         try updateSession(db, id: "sess-1", input: 25, output: 9, cacheRead: 3, cost: 0.025, timeUpdated: 2000)
         let checkpoint = checkpoint(from: first, path: db.path)
 
-        let second = try adapter.readSessionChanges(file: db, checkpoint: checkpoint)
+        let second = try adapter.readUsageChanges(record: record, checkpoint: checkpoint)
 
         let event = try XCTUnwrap(second.events.first)
         XCTAssertEqual(second.events.count, 1)
@@ -86,16 +89,17 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(event.costUsd), 0.015, accuracy: 0.000001)
     }
 
-    func test_readSessionChanges_treatsAggregateDecreaseAsReset() throws {
+    func test_readUsageChanges_treatsAggregateDecreaseAsReset() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         try makeOpenCodeDatabase(db)
         try insertSession(db, id: "sess-1", input: 100, output: 50, cost: 0.10, timeUpdated: 1000)
         let adapter = OpenCodeLocalUsageAdapter(root: root)
-        let first = try adapter.readSessionChanges(file: db, checkpoint: nil)
+        let record = try onlyRecord(adapter)
+        let first = try adapter.readUsageChanges(record: record, checkpoint: nil)
         try updateSession(db, id: "sess-1", input: 8, output: 4, cost: 0.02, timeUpdated: 2000)
 
-        let reset = try adapter.readSessionChanges(file: db, checkpoint: checkpoint(from: first, path: db.path))
+        let reset = try adapter.readUsageChanges(record: record, checkpoint: checkpoint(from: first, path: db.path))
 
         let event = try XCTUnwrap(reset.events.first)
         XCTAssertEqual(event.inputTokens, 8)
@@ -104,7 +108,7 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(event.costUsd), 0.02, accuracy: 0.000001)
     }
 
-    func test_readSessionChanges_reportsUnsupportedSchema() throws {
+    func test_readUsageChanges_reportsUnsupportedSchema() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         let queue = try DatabaseQueue(path: db.path)
@@ -112,18 +116,20 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
             try db.execute(sql: "CREATE TABLE session (id TEXT PRIMARY KEY)")
         }
 
-        XCTAssertThrowsError(try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: db, checkpoint: nil)) { error in
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+        XCTAssertThrowsError(try adapter.readUsageChanges(record: onlyRecord(adapter), checkpoint: nil)) { error in
             XCTAssertTrue(String(describing: error).contains("Unsupported OpenCode session schema"))
         }
     }
 
-    func test_readSessionChanges_doesNotExposeSensitiveTablesInEventOrContext() throws {
+    func test_readUsageChanges_doesNotExposeSensitiveTablesInEventOrContext() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         try makeOpenCodeDatabase(db, includeSensitiveTables: true)
         try insertSession(db, id: "sess-1", directory: "/safe/project", input: 10, output: 5, cost: 0.01)
 
-        let result = try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: db, checkpoint: nil)
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+        let result = try adapter.readUsageChanges(record: try onlyRecord(adapter), checkpoint: nil)
 
         let event = try XCTUnwrap(result.events.first)
         XCTAssertFalse(event.sourceEventId.contains("SECRET_PROMPT"))
@@ -144,10 +150,10 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
             root
         ])
 
-        XCTAssertEqual(candidates, [db.resolvingSymlinksInPath()])
+        XCTAssertEqual(candidates, [try onlyRecord(adapter)])
     }
 
-    func test_discoverFiles_includesDatabaseAndExistingSidecars() throws {
+    func test_discoverRecords_returnsOnlyMainDatabaseRecord() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         let wal = root.appendingPathComponent("opencode.db-wal")
@@ -155,15 +161,12 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
         try Data().write(to: wal)
         let adapter = OpenCodeLocalUsageAdapter(root: root)
 
-        let files = try adapter.discoverFiles()
+        let records = try adapter.discoverRecords()
 
-        XCTAssertEqual(files, [
-            db.resolvingSymlinksInPath(),
-            wal.resolvingSymlinksInPath()
-        ])
+        XCTAssertEqual(records, [LocalUsageRecord(readURL: db.resolvingSymlinksInPath(), checkpointURL: db.resolvingSymlinksInPath(), kind: .sqliteDatabase)])
     }
 
-    func test_candidates_keepWalOnlyChangeAsWalTrigger() throws {
+    func test_candidates_mapWalOnlyChangeToMainDatabaseRecord() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         let wal = root.appendingPathComponent("opencode.db-wal")
@@ -173,18 +176,20 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
 
         let candidates = try adapter.candidates(fromChangedPaths: [wal])
 
-        XCTAssertEqual(candidates, [wal.resolvingSymlinksInPath()])
+        XCTAssertEqual(candidates, [try onlyRecord(adapter)])
     }
 
-    func test_readSessionChanges_queriesDatabaseWhenSidecarIsPassed() throws {
+    func test_readUsageChanges_queriesDatabaseWhenSidecarTriggersRecord() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         let wal = root.appendingPathComponent("opencode.db-wal")
         try makeOpenCodeDatabase(db)
         try Data().write(to: wal)
         try insertSession(db, id: "sess-1", input: 10, output: 5, cost: 0.01)
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+        let record = try XCTUnwrap(adapter.candidates(fromChangedPaths: [wal]).first)
 
-        let result = try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: wal, checkpoint: nil)
+        let result = try adapter.readUsageChanges(record: record, checkpoint: nil)
 
         let event = try XCTUnwrap(result.events.first)
         XCTAssertEqual(result.events.count, 1)
@@ -192,7 +197,7 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(result.checkpoint.path, db.resolvingSymlinksInPath().path)
     }
 
-    func test_readSessionChanges_readsUncheckpointedWalDataThroughDatabase() throws {
+    func test_readUsageChanges_readsUncheckpointedWalDataThroughDatabase() throws {
         let root = try makeTempDirectory()
         let db = root.appendingPathComponent("opencode.db")
         let wal = root.appendingPathComponent("opencode.db-wal")
@@ -212,8 +217,10 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
                 """)
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: wal.path))
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+        let record = try XCTUnwrap(adapter.candidates(fromChangedPaths: [wal]).first)
 
-        let result = try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: wal, checkpoint: nil)
+        let result = try adapter.readUsageChanges(record: record, checkpoint: nil)
 
         let event = try XCTUnwrap(result.events.first)
         XCTAssertEqual(event.sourceSessionId, "sess-wal")
@@ -228,6 +235,10 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func onlyRecord(_ adapter: OpenCodeLocalUsageAdapter) throws -> LocalUsageRecord {
+        try XCTUnwrap(adapter.discoverRecords().first)
     }
 
     private func makeOpenCodeDatabase(_ url: URL, includeSensitiveTables: Bool = false) throws {

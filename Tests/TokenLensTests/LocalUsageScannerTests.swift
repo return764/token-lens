@@ -101,7 +101,7 @@ final class LocalUsageScannerTests: XCTestCase {
 
         await scanner.scanAll()
 
-        XCTAssertEqual(adapter.readSessionChangesCallCount, 1)
+        XCTAssertEqual(adapter.readUsageChangesCallCount, 1)
         XCTAssertEqual(try TokenUsagesRepository(dbManager: dbManager).fetchRecent(limit: 10).count, 1)
     }
 
@@ -127,11 +127,44 @@ final class LocalUsageScannerTests: XCTestCase {
         ))
         let queue = LocalSourceImportQueue(repository: repo, adapters: [adapter], debounceInterval: 0)
 
-        await queue.enqueue(sourceTool: "spy", paths: [file])
+        await queue.enqueue(sourceTool: "spy", records: [.appendOnlyJSONL(file)])
         await queue.flushNow()
         try await waitForUsageCount(dbManager: dbManager, expected: 1)
 
-        XCTAssertEqual(adapter.readSessionChangesCallCount, 1)
+        XCTAssertEqual(adapter.readUsageChangesCallCount, 1)
+    }
+
+    func test_importQueue_deduplicatesRecordsByCheckpointPath() async throws {
+        let dbManager = try DatabaseManager(kind: .inMemory)
+        let repo = LocalScanRepository(dbManager: dbManager)
+        let root = try makeTempDirectory()
+        let db = root.appendingPathComponent("opencode.db")
+        let wal = root.appendingPathComponent("opencode.db-wal")
+        try "db".write(to: db, atomically: true, encoding: .utf8)
+        try "wal".write(to: wal, atomically: true, encoding: .utf8)
+        let adapter = SpySessionReadAdapter(root: root, file: db)
+        let dbRecord = LocalUsageRecord(readURL: db, checkpointURL: db, kind: .sqliteDatabase)
+        let walTriggeredRecord = LocalUsageRecord(readURL: wal, checkpointURL: db, kind: .sqliteDatabase)
+        try repo.upsertSourceStatus(LocalScanSourceStatus(
+            sourceTool: "spy",
+            displayName: "Spy",
+            rootPath: root.path,
+            status: "watching",
+            lastScanStartedAt: nil,
+            lastScanFinishedAt: nil,
+            filesSeen: 1,
+            filesScanned: 0,
+            eventsImported: 0,
+            parseErrorCount: 0,
+            lastError: nil
+        ))
+        let queue = LocalSourceImportQueue(repository: repo, adapters: [adapter], debounceInterval: 0)
+
+        await queue.enqueue(sourceTool: "spy", records: [dbRecord, walTriggeredRecord])
+        await queue.flushNow()
+        try await waitForUsageCount(dbManager: dbManager, expected: 1)
+
+        XCTAssertEqual(adapter.readUsageChangesCallCount, 1)
     }
 
     private func makeTempDirectory() throws -> URL {
@@ -158,20 +191,45 @@ private struct StubLocalUsageAdapter: LocalUsageAdapter {
     let id: String
     let displayName: String
     let defaultRoot: URL
-    let files: [URL]
-    let parseClosure: (URL) throws -> [LocalUsageEvent]
+    let records: [LocalUsageRecord]
+    let parseClosure: (LocalUsageRecord) throws -> [LocalUsageEvent]
 
     init(id: String, displayName: String, root: URL, files: [URL], parse: @escaping (URL) throws -> [LocalUsageEvent]) {
         self.id = id
         self.displayName = displayName
         self.defaultRoot = root
-        self.files = files
-        self.parseClosure = parse
+        self.records = files.map(LocalUsageRecord.appendOnlyJSONL)
+        self.parseClosure = { record in try parse(record.readURL) }
     }
 
-    func discoverFiles() throws -> [URL] { files }
-    func parseFile(_ url: URL) throws -> [LocalUsageEvent] { try parseClosure(url) }
-    func parseLines(_ lines: [(lineNumber: Int?, text: String)], file: URL, context: inout LocalUsageParseContext?) throws -> [LocalUsageEvent] { try parseClosure(file) }
+    func discoverRecords() throws -> [LocalUsageRecord] { records }
+
+    func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.candidateJSONLRecords(for: paths)
+    }
+
+    func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        let events = try parseClosure(record)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: record.readURL.path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        return LocalUsageSessionReadResult(
+            events: events,
+            checkpoint: LocalScanFileCheckpointUpdate(
+                sourceTool: id,
+                path: record.checkpointURL.path,
+                fileSize: fileSize,
+                modifiedAt: attributes?[.modificationDate] as? Date,
+                fileId: checkpoint?.fileId,
+                readOffset: fileSize,
+                parseContext: checkpoint?.parseContext,
+                importedEventCount: events.count,
+                status: "ok",
+                lastError: nil
+            ),
+            observedSize: fileSize,
+            shouldReenqueue: false
+        )
+    }
 }
 
 private final class SpySessionReadAdapter: LocalUsageAdapter {
@@ -179,23 +237,27 @@ private final class SpySessionReadAdapter: LocalUsageAdapter {
     let displayName = "Spy"
     let defaultRoot: URL
     let file: URL
-    var readSessionChangesCallCount = 0
+    var readUsageChangesCallCount = 0
 
     init(root: URL, file: URL) {
         self.defaultRoot = root
         self.file = file
     }
 
-    func discoverFiles() throws -> [URL] {
-        [file]
+    func discoverRecords() throws -> [LocalUsageRecord] {
+        [.appendOnlyJSONL(file)]
     }
 
-    func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
-        readSessionChangesCallCount += 1
+    func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.candidateJSONLRecords(for: paths)
+    }
+
+    func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        readUsageChangesCallCount += 1
         let event = LocalUsageEvent(
             key: "spy:native:event-1",
             sourceTool: "spy",
-            sourceFile: file.path,
+            sourceFile: record.readURL.path,
             sourceEventId: "event-1",
             sourceSessionId: "session-1",
             sourceCwd: nil,
@@ -214,7 +276,7 @@ private final class SpySessionReadAdapter: LocalUsageAdapter {
             events: [event],
             checkpoint: LocalScanFileCheckpointUpdate(
                 sourceTool: id,
-                path: file.path,
+                path: record.checkpointURL.path,
                 fileSize: 8,
                 modifiedAt: nil,
                 fileId: nil,
@@ -227,17 +289,5 @@ private final class SpySessionReadAdapter: LocalUsageAdapter {
             observedSize: 8,
             shouldReenqueue: false
         )
-    }
-
-    func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
-        throw LocalUsageParseError.unsupportedSourceSchema("parseFile should not be used")
-    }
-
-    func parseLines(
-        _ lines: [(lineNumber: Int?, text: String)],
-        file: URL,
-        context: inout LocalUsageParseContext?
-    ) throws -> [LocalUsageEvent] {
-        throw LocalUsageParseError.unsupportedSourceSchema("parseLines should not be used")
     }
 }

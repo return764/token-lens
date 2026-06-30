@@ -65,60 +65,38 @@ public struct LocalUsageParseContext: Equatable {
     }
 }
 
+public struct LocalUsageRecord: Equatable, Hashable {
+    public let readURL: URL
+    public let checkpointURL: URL
+    public let displayPath: String
+    public let kind: LocalUsageRecordKind
+
+    public init(readURL: URL, checkpointURL: URL, displayPath: String? = nil, kind: LocalUsageRecordKind) {
+        self.readURL = readURL
+        self.checkpointURL = checkpointURL
+        self.displayPath = displayPath ?? readURL.path
+        self.kind = kind
+    }
+
+    public static func appendOnlyJSONL(_ url: URL) -> LocalUsageRecord {
+        let canonical = url.resolvingSymlinksInPath()
+        return LocalUsageRecord(readURL: canonical, checkpointURL: canonical, kind: .appendOnlyJSONL)
+    }
+}
+
+public enum LocalUsageRecordKind: Equatable, Hashable {
+    case appendOnlyJSONL
+    case sqliteDatabase
+}
+
 public protocol LocalUsageAdapter {
     var id: String { get }
     var displayName: String { get }
     var defaultRoot: URL { get }
 
-    func discoverFiles() throws -> [URL]
-    func candidates(fromChangedPaths paths: [URL]) throws -> [URL]
-    func checkpointURL(for file: URL) -> URL
-    func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult
-    func parseFile(_ url: URL) throws -> [LocalUsageEvent]
-    func bootstrapContext(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext?
-    /// Incremental parsing: parse only the given lines (already read from file), updating source-specific context.
-    func parseLines(_ lines: [(lineNumber: Int?, text: String)], file: URL, context: inout LocalUsageParseContext?) throws -> [LocalUsageEvent]
-}
-
-public extension LocalUsageAdapter {
-    func candidates(fromChangedPaths paths: [URL]) throws -> [URL] {
-        try LocalRecordJSON.candidateJSONLFiles(for: paths)
-    }
-
-    func checkpointURL(for file: URL) -> URL {
-        file.resolvingSymlinksInPath()
-    }
-
-    func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
-        let reader = LocalJSONLIncrementalReader()
-        let readOffset = Int64(checkpoint?.readOffset ?? 0)
-        let batch = try reader.readNewLines(url: file, from: readOffset)
-        var parseContext = try bootstrapContext(file: file, checkpoint: checkpoint)
-        let events = try parseLines(batch.lines, file: file, context: &parseContext)
-        let checkpointUpdate = LocalScanFileCheckpointUpdate(
-            sourceTool: id,
-            path: file.path,
-            fileSize: Int(batch.fileSize),
-            modifiedAt: batch.modifiedAt,
-            fileId: checkpoint?.fileId,
-            readOffset: Int(batch.nextOffset),
-            parseContext: parseContext,
-            importedEventCount: events.count,
-            status: "ok",
-            lastError: nil
-        )
-
-        return LocalUsageSessionReadResult(
-            events: events,
-            checkpoint: checkpointUpdate,
-            observedSize: Int(batch.fileSize),
-            shouldReenqueue: batch.fileSize > batch.nextOffset
-        )
-    }
-
-    func bootstrapContext(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext? {
-        checkpoint?.parseContext
-    }
+    func discoverRecords() throws -> [LocalUsageRecord]
+    func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord]
+    func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult
 }
 
 public struct LocalUsageSessionReadResult: Equatable {
@@ -258,6 +236,10 @@ enum LocalRecordJSON {
         return files.sorted { $0.path < $1.path }
     }
 
+    static func discoverJSONLRecords(root: URL) throws -> [LocalUsageRecord] {
+        try discoverJSONLFiles(root: root).map(LocalUsageRecord.appendOnlyJSONL)
+    }
+
     static func candidateJSONLFiles(for paths: [URL]) throws -> [URL] {
         var seen = Set<String>()
         var urls: [URL] = []
@@ -284,5 +266,9 @@ enum LocalRecordJSON {
         }
 
         return urls.sorted { $0.path < $1.path }
+    }
+
+    static func candidateJSONLRecords(for paths: [URL]) throws -> [LocalUsageRecord] {
+        try candidateJSONLFiles(for: paths).map(LocalUsageRecord.appendOnlyJSONL)
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ClaudeCodeLocalUsageAdapter: LocalUsageAdapter {
+public struct ClaudeCodeLocalUsageAdapter: LocalUsageAdapter, AppendOnlyJSONLUsageDecoding {
     public let defaultRoot: URL
 
     public var id: String { "claude_code" }
@@ -10,29 +10,28 @@ public struct ClaudeCodeLocalUsageAdapter: LocalUsageAdapter {
         self.defaultRoot = root
     }
 
-    public func discoverFiles() throws -> [URL] {
-        try LocalRecordJSON.discoverJSONLFiles(root: defaultRoot)
+    public func discoverRecords() throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.discoverJSONLRecords(root: defaultRoot)
     }
 
-    public func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.components(separatedBy: .newlines).enumerated().map { offset, line in
-            (lineNumber: Optional(offset + 1), text: line)
-        }
-        var context: LocalUsageParseContext?
-        return try parseLines(lines, file: url, context: &context)
+    public func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.candidateJSONLRecords(for: paths)
     }
 
-    public func parseLines(
+    public func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        try AppendOnlyJSONLUsageReader().readChanges(record: record, checkpoint: checkpoint, decoder: self)
+    }
+
+    public func parseJSONLLines(
         _ lines: [(lineNumber: Int?, text: String)],
-        file: URL,
+        record: LocalUsageRecord,
         context: inout LocalUsageParseContext?
     ) throws -> [LocalUsageEvent] {
         var events: [LocalUsageEvent] = []
 
         for (lineNumber, line) in lines {
             guard let object = try LocalRecordJSON.object(from: line, lineNumber: lineNumber ?? 0),
-                  let event = usageEvent(from: object, lineNumber: lineNumber ?? 0, file: file) else { continue }
+                  let event = usageEvent(from: object, lineNumber: lineNumber ?? 0, file: record.readURL) else { continue }
             events.append(event)
         }
 

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CodexLocalUsageAdapter: LocalUsageAdapter {
+public struct CodexLocalUsageAdapter: LocalUsageAdapter, AppendOnlyJSONLUsageDecoding {
     public let defaultRoot: URL
 
     public var id: String { "codex" }
@@ -10,31 +10,30 @@ public struct CodexLocalUsageAdapter: LocalUsageAdapter {
         self.defaultRoot = root
     }
 
-    public func discoverFiles() throws -> [URL] {
-        try LocalRecordJSON.discoverJSONLFiles(root: defaultRoot)
+    public func discoverRecords() throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.discoverJSONLRecords(root: defaultRoot)
     }
 
-    public func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.components(separatedBy: .newlines).enumerated().map { offset, line in
-            (lineNumber: Optional(offset + 1), text: line)
-        }
-        var context: LocalUsageParseContext?
-        return try parseLines(lines, file: url, context: &context)
+    public func candidates(fromChangedPaths paths: [URL]) throws -> [LocalUsageRecord] {
+        try LocalRecordJSON.candidateJSONLRecords(for: paths)
     }
 
-    public func bootstrapContext(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext? {
+    public func readUsageChanges(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
+        try AppendOnlyJSONLUsageReader().readChanges(record: record, checkpoint: checkpoint, decoder: self)
+    }
+
+    public func initialContext(record: LocalUsageRecord, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext? {
         if let context = checkpoint?.parseContext, context.sourceTool == id {
             return context
         }
 
         guard let checkpoint, checkpoint.readOffset > 0 else { return nil }
-        let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+        let attrs = try FileManager.default.attributesOfItem(atPath: record.readURL.path)
         let fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
         let bytesToRead = min(Int64(checkpoint.readOffset), fileSize)
         guard bytesToRead > 0 else { return nil }
 
-        let handle = try FileHandle(forReadingFrom: file)
+        let handle = try FileHandle(forReadingFrom: record.readURL)
         defer { try? handle.close() }
         guard let data = try handle.read(upToCount: Int(bytesToRead)),
               let text = String(data: data, encoding: .utf8) else { return nil }
@@ -47,9 +46,9 @@ public struct CodexLocalUsageAdapter: LocalUsageAdapter {
         return makeContext(payload)
     }
 
-    public func parseLines(
+    public func parseJSONLLines(
         _ lines: [(lineNumber: Int?, text: String)],
-        file: URL,
+        record: LocalUsageRecord,
         context: inout LocalUsageParseContext?
     ) throws -> [LocalUsageEvent] {
         var payload = decodeContext(context) ?? CodexParseContextPayload()
@@ -59,7 +58,7 @@ public struct CodexLocalUsageAdapter: LocalUsageAdapter {
             let effectiveLineNumber = lineNumber ?? 0
             guard let object = try LocalRecordJSON.object(from: line, lineNumber: effectiveLineNumber) else { continue }
             payload.ingest(object)
-            if let event = try makeEvent(from: object, file: file, lineNumber: effectiveLineNumber, ctx: payload) {
+            if let event = try makeEvent(from: object, file: record.readURL, lineNumber: effectiveLineNumber, ctx: payload) {
                 events.append(event)
             }
         }
