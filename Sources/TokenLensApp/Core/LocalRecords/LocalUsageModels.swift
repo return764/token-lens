@@ -72,6 +72,7 @@ public protocol LocalUsageAdapter {
 
     func discoverFiles() throws -> [URL]
     func candidates(fromChangedPaths paths: [URL]) throws -> [URL]
+    func checkpointURL(for file: URL) -> URL
     func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult
     func parseFile(_ url: URL) throws -> [LocalUsageEvent]
     func bootstrapContext(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageParseContext?
@@ -82,6 +83,10 @@ public protocol LocalUsageAdapter {
 public extension LocalUsageAdapter {
     func candidates(fromChangedPaths paths: [URL]) throws -> [URL] {
         try LocalRecordJSON.candidateJSONLFiles(for: paths)
+    }
+
+    func checkpointURL(for file: URL) -> URL {
+        file.resolvingSymlinksInPath()
     }
 
     func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {

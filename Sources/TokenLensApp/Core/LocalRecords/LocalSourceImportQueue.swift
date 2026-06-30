@@ -87,7 +87,8 @@ public actor LocalSourceImportQueue {
         guard let adapter = adapters.first(where: { $0.id == sourceTool }) else { return }
 
         do {
-            let checkpoint = try repository.checkpoint(for: sourceTool, path: path.path)
+            let checkpointURL = adapter.checkpointURL(for: path)
+            let checkpoint = try repository.checkpoint(for: sourceTool, path: checkpointURL.path)
             let readResult = try adapter.readSessionChanges(file: path, checkpoint: checkpoint)
 
             guard !readResult.events.isEmpty else {
@@ -118,9 +119,10 @@ public actor LocalSourceImportQueue {
             }
         } catch {
             print("[TokenLens] ❌ [\(sourceTool)] Import error \(path.lastPathComponent): \(error)")
-            let ck = try? repository.checkpoint(for: sourceTool, path: path.path)
+            let checkpointURL = adapter.checkpointURL(for: path)
+            let ck = try? repository.checkpoint(for: sourceTool, path: checkpointURL.path)
             _ = try? repository.importIncrementalUsageEvents([], checkpoint: LocalScanFileCheckpointUpdate(
-                sourceTool: sourceTool, path: path.path,
+                sourceTool: sourceTool, path: checkpointURL.path,
                 fileSize: 0, modifiedAt: nil,
                 fileId: ck?.fileId, readOffset: ck?.readOffset ?? 0,
                 parseContext: ck?.parseContext,

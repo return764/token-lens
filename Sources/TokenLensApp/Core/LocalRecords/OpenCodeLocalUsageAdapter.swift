@@ -11,31 +11,54 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
         defaultRoot.appendingPathComponent("opencode.db")
     }
 
+    private var databaseSidecarFilenames: Set<String> {
+        ["opencode.db", "opencode.db-wal", "opencode.db-shm"]
+    }
+
     public init(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/opencode")) {
         self.defaultRoot = root
     }
 
     public func discoverFiles() throws -> [URL] {
-        FileManager.default.fileExists(atPath: databaseURL.path)
-            ? [databaseURL.resolvingSymlinksInPath()]
-            : []
+        databaseSidecarFilenames
+            .map { defaultRoot.appendingPathComponent($0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .map { $0.resolvingSymlinksInPath() }
+            .sorted { $0.path < $1.path }
     }
 
     public func candidates(fromChangedPaths paths: [URL]) throws -> [URL] {
-        let canonicalDatabase = databaseURL.resolvingSymlinksInPath()
-        var shouldScan = false
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else { return [] }
+
+        var seen = Set<String>()
+        var candidates: [URL] = []
+
+        func append(_ url: URL) {
+            let canonical = url.resolvingSymlinksInPath()
+            guard seen.insert(canonical.path).inserted else { return }
+            candidates.append(canonical)
+        }
 
         for path in paths {
             let filename = path.lastPathComponent
-            if path.path == defaultRoot.path || filename == "opencode.db" || filename == "opencode.db-wal" || filename == "opencode.db-shm" {
-                shouldScan = true
-                break
+            if path.path == defaultRoot.path {
+                for file in try discoverFiles() {
+                    append(file)
+                }
+            } else if databaseSidecarFilenames.contains(filename) {
+                if FileManager.default.fileExists(atPath: path.path) {
+                    append(path)
+                } else {
+                    append(databaseURL)
+                }
             }
         }
 
-        return shouldScan && FileManager.default.fileExists(atPath: databaseURL.path)
-            ? [canonicalDatabase]
-            : []
+        return candidates.sorted { $0.path < $1.path }
+    }
+
+    public func checkpointURL(for file: URL) -> URL {
+        normalizedDatabaseURL(for: file)
     }
 
     public func parseFile(_ url: URL) throws -> [LocalUsageEvent] {
@@ -52,12 +75,14 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
     }
 
     public func readSessionChanges(file: URL, checkpoint: LocalScanFileCheckpoint?) throws -> LocalUsageSessionReadResult {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
+        let database = normalizedDatabaseURL(for: file)
+        let checkpoint = checkpoint?.path == database.path ? checkpoint : nil
+        let attributes = try? FileManager.default.attributesOfItem(atPath: database.path)
         let fileSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         let modifiedAt = attributes?[.modificationDate] as? Date
 
         var contextPayload = decodeContext(checkpoint?.parseContext) ?? OpenCodeParseContextPayload()
-        let rows = try fetchSessionRows(from: file)
+        let rows = try fetchSessionRows(from: database)
         var events: [LocalUsageEvent] = []
 
         for row in rows {
@@ -87,7 +112,7 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
                 events.append(LocalUsageEvent(
                     key: key,
                     sourceTool: id,
-                    sourceFile: file.path,
+                    sourceFile: database.path,
                     sourceEventId: nativeId,
                     sourceSessionId: row.id,
                     sourceCwd: row.directory,
@@ -112,7 +137,7 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
         let parseContext = makeContext(contextPayload)
         let checkpointUpdate = LocalScanFileCheckpointUpdate(
             sourceTool: id,
-            path: file.path,
+            path: database.path,
             fileSize: fileSize,
             modifiedAt: modifiedAt,
             fileId: checkpoint?.fileId,
@@ -129,6 +154,12 @@ public struct OpenCodeLocalUsageAdapter: LocalUsageAdapter {
             observedSize: fileSize,
             shouldReenqueue: false
         )
+    }
+
+    private func normalizedDatabaseURL(for file: URL) -> URL {
+        databaseSidecarFilenames.contains(file.lastPathComponent)
+            ? databaseURL.resolvingSymlinksInPath()
+            : file.resolvingSymlinksInPath()
     }
 
     private func fetchSessionRows(from file: URL) throws -> [OpenCodeSessionRow] {

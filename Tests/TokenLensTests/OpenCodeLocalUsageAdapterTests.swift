@@ -147,6 +147,81 @@ final class OpenCodeLocalUsageAdapterTests: XCTestCase {
         XCTAssertEqual(candidates, [db.resolvingSymlinksInPath()])
     }
 
+    func test_discoverFiles_includesDatabaseAndExistingSidecars() throws {
+        let root = try makeTempDirectory()
+        let db = root.appendingPathComponent("opencode.db")
+        let wal = root.appendingPathComponent("opencode.db-wal")
+        try makeOpenCodeDatabase(db)
+        try Data().write(to: wal)
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+
+        let files = try adapter.discoverFiles()
+
+        XCTAssertEqual(files, [
+            db.resolvingSymlinksInPath(),
+            wal.resolvingSymlinksInPath()
+        ])
+    }
+
+    func test_candidates_keepWalOnlyChangeAsWalTrigger() throws {
+        let root = try makeTempDirectory()
+        let db = root.appendingPathComponent("opencode.db")
+        let wal = root.appendingPathComponent("opencode.db-wal")
+        try makeOpenCodeDatabase(db)
+        try Data().write(to: wal)
+        let adapter = OpenCodeLocalUsageAdapter(root: root)
+
+        let candidates = try adapter.candidates(fromChangedPaths: [wal])
+
+        XCTAssertEqual(candidates, [wal.resolvingSymlinksInPath()])
+    }
+
+    func test_readSessionChanges_queriesDatabaseWhenSidecarIsPassed() throws {
+        let root = try makeTempDirectory()
+        let db = root.appendingPathComponent("opencode.db")
+        let wal = root.appendingPathComponent("opencode.db-wal")
+        try makeOpenCodeDatabase(db)
+        try Data().write(to: wal)
+        try insertSession(db, id: "sess-1", input: 10, output: 5, cost: 0.01)
+
+        let result = try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: wal, checkpoint: nil)
+
+        let event = try XCTUnwrap(result.events.first)
+        XCTAssertEqual(result.events.count, 1)
+        XCTAssertEqual(event.sourceFile, db.resolvingSymlinksInPath().path)
+        XCTAssertEqual(result.checkpoint.path, db.resolvingSymlinksInPath().path)
+    }
+
+    func test_readSessionChanges_readsUncheckpointedWalDataThroughDatabase() throws {
+        let root = try makeTempDirectory()
+        let db = root.appendingPathComponent("opencode.db")
+        let wal = root.appendingPathComponent("opencode.db-wal")
+        try makeOpenCodeDatabase(db)
+        let writer = try DatabaseQueue(path: db.path)
+        try writer.writeWithoutTransaction { db in
+            _ = try String.fetchOne(db, sql: "PRAGMA journal_mode = WAL")
+            try db.execute(sql: "PRAGMA wal_autocheckpoint = 0")
+        }
+        try writer.write { db in
+            try db.execute(sql: """
+                INSERT INTO session
+                (id, directory, model, cost, tokens_input, tokens_output, tokens_reasoning,
+                 tokens_cache_read, tokens_cache_write, time_created, time_updated)
+                VALUES ('sess-wal', '/project', '{"providerID":"openai","id":"gpt-5"}',
+                        0.02, 12, 8, 0, 0, 0, 1000, 2000)
+                """)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wal.path))
+
+        let result = try OpenCodeLocalUsageAdapter(root: root).readSessionChanges(file: wal, checkpoint: nil)
+
+        let event = try XCTUnwrap(result.events.first)
+        XCTAssertEqual(event.sourceSessionId, "sess-wal")
+        XCTAssertEqual(event.inputTokens, 12)
+        XCTAssertEqual(event.outputTokens, 8)
+        XCTAssertEqual(event.sourceFile, db.resolvingSymlinksInPath().path)
+    }
+
     private func makeTempDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TokenLensTests")

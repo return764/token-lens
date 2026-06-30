@@ -61,7 +61,8 @@ public final class LocalUsageScanner {
                 let modifiedAt = attributes?[.modificationDate] as? Date
 
                 do {
-                    let existingCheckpoint = try repository.checkpoint(for: adapter.id, path: file.path)
+                    let checkpointURL = adapter.checkpointURL(for: file)
+                    let existingCheckpoint = try repository.checkpoint(for: adapter.id, path: checkpointURL.path)
                     let readResult = try adapter.readSessionChanges(file: file, checkpoint: existingCheckpoint)
 
                     let result = try repository.importIncrementalUsageEvents(readResult.events, checkpoint: readResult.checkpoint)
