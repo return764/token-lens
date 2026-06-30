@@ -355,16 +355,13 @@ struct SettingsTab: View {
                 }
 
                 Picker("Live Usage Mode", selection: $appState.liveDisplayMode) {
-                    Text("Token (→)").tag("horizontal")
-                    Text("Token (↓)").tag("vertical")
-                    Text("Cost ($)").tag("cost")
+                    Text("Token Vertical").tag("vertical")
+                    Text("Token Horizontal").tag("horizontal")
+                    Text("Cost").tag("cost")
                 }
                 .onChange(of: appState.liveDisplayMode) { _, newValue in
                     appState.setLiveDisplayMode(newValue)
                 }
-                Text("How live import activity is shown in the menu bar.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
 
                 Picker("Aggregation Range", selection: Binding(
                     get: { appState.timeRange },
