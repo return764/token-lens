@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-30
+
+### Added
+
+- tag-triggered GitHub Actions release workflow
+- release notes generated from CHANGELOG.md during releases
+- overview token usage chart with range handling and hourly today view
+- dashboard usage heatmap
+- OpenCode local source support
+
+### Changed
+
+- live cost and token display options merged into live usage mode
+- settings window replaced with dashboard tabs
+- overview chart hover performance optimized
+- local usage adapter records redesigned
+- README split by language
+- agent skills moved to the Codex directory
+
+### Fixed
+
+- non-tag release workflow handling and build script sed delimiter usage
+- OpenCode WAL change handling
+- menu popover responsiveness
+
 ## [0.1.0] - 2026-06-13
 
 ### Added
